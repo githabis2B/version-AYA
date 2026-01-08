@@ -1,0 +1,38 @@
+name: Extract Kernel Tarball
+on:
+  workflow_dispatch: # 支持手动点击按钮运行
+  release:
+    types: [published] # 发布 Release 时自动运行
+
+jobs:
+  unzip-process:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 必须赋予写入权限
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Release Asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 自动寻找最新的 Release 并下载后缀为 .tar.gz 的文件
+          gh release download --pattern "*.tar.gz" --output kernel_archive.tar.gz
+
+      - name: Extract tar.gz
+        run: |
+          # 创建目标文件夹并解压
+          mkdir -p kernel_source
+          tar -zxvf kernel_archive.tar.gz -C ./kernel_source
+          # 删除压缩包以减小仓库体积
+          rm kernel_archive.tar.gz
+
+      - name: Commit and Push Changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "chore: auto-extract kernel source from release" || echo "No changes to commit"
+          git push
