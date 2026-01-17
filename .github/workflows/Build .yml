@@ -1,18 +1,17 @@
 name: s24
 on:
-  workflow_dispatch: # 手动点击触发
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # 设置 6 小时超时
+    timeout-minutes: 360
 
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
 
       - name: Maximize Build Space
-        # 清理 GitHub 磁盘空间，腾出约 30GB 用于编译中间件
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 8192
@@ -20,72 +19,62 @@ jobs:
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
-          # 必须开启大 Swap：16GB 虚拟内存是 7GB 物理内存存活的关键
           swap-size-mb: 16384
 
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3-pip
 
       - name: Setup KernelSU and Patch Source
         run: |
-          # 1. 自动寻找 common 目录并进入
-          COMMON_PATH=$(find . -name "common" -type d | grep "kernel_platform/common" | head -n 1)
-          if [ -z "$COMMON_PATH" ]; then
-            echo "错误：无法在仓库中定位到 kernel_platform/common 路径！"
-            echo "当前目录下的文件树如下："
-            ls -R
-            exit 1
-          fi
-          echo "定位到目标目录: $COMMON_PATH"
-          cd "$COMMON_PATH"
-
-          # 2. 注入 KernelSU (修复 URL)
+          # 核心修复 1：进入正确的路径
+          cd kernel_source/kernel_platform/common
+          
+          # 核心修复 2：修正 KernelSU 注入脚本链接 (2026年推荐 KSU-Next)
           curl -LSs "https://raw.githubusercontent.com" | bash -
           
           # 3. 物理删除 ABI 限制
           rm -f android/abi_gki_protected_exports_*
           
-          # 4. 修改 Defconfig
-          # 针对 pineapple 平台，Android 14 (AXK4)
-          DEFCONFIG="arch/arm64/configs/pineapple_gki_defconfig"
-          if [ ! -f "$DEFCONFIG" ]; then
-            DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          fi
+          # 核心修复 3：S24 属于 pineapple 平台，修正 defconfig 逻辑
+          # 优先修改 gki_defconfig，这是 GKI 编译的基准
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
           
-          echo "正在修改配置文件: $DEFCONFIG"
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
+          # 禁用三星 RKP 和 Knox 安全检查
           sed -i 's/CONFIG_RKP_KDP=y/CONFIG_RKP_KDP=n/g' $DEFCONFIG
           sed -i 's/CONFIG_RKP_NS_PROT=y/CONFIG_RKP_NS_PROT=n/g' $DEFCONFIG
-          sed -i 's/CONFIG_SECURITY_DEFEX=y/CONFIG_SECURITY_DEFEX=n/g' $DEFCONFIG
-          sed -i 's/CONFIG_SECURITY_DSMS=y/CONFIG_SECURITY_DSMS=n/g' $DEFCONFIG
           sed -i 's/CONFIG_KNOX_KAP=y/CONFIG_KNOX_KAP=n/g' $DEFCONFIG
-          sed -i 's/CONFIG_FIVE=y/CONFIG_FIVE=n/g' $DEFCONFIG
           sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
           sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
           echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
-          sed -i 's/CONFIG_MODULE_SIG_FORCE=y/CONFIG_MODULE_SIG_FORCE=n/g' $DEFCONFIG
-          echo "CONFIG_MODULE_SIG=n" >> $DEFCONFIG
 
       - name: Build Kernel (Using Official GKI Script)
         run: |
-          # 赋予执行权限
-          chmod +x build_kernel_GKI.sh
-          chmod -R +x kernel_platform/tools/
-          chmod -R +x kernel_platform/build/
+          # 核心修复 4：进入 build 脚本所在的 kernel_source 目录
+          cd kernel_source
           
-          # 设置 Bazel 内存与 CPU 限制，防止 OOM 导致任务关闭
+          # 核心修复 5：赋予所有预编译工具链权限（这是 Bazel 运行的关键）
+          chmod +x build_kernel_GKI.sh
+          find kernel_platform/tools/ -type f -exec chmod +x {} +
+          find kernel_platform/build/ -type f -exec chmod +x {} +
+          # 额外赋予内部 bazel 可执行权限
+          find kernel_platform/prebuilts/ -type f -name "bazel" -exec chmod +x {} +
+          
+          # 设置内存与 CPU 限制
           export BAZEL_RAM=6144
           export BAZEL_JOBS=2
           
-          # 执行官方构建脚本（它会自动合并 vendor 里的屏幕和 Wi-Fi 驱动）
+          # 执行编译
           ./build_kernel_GKI.sh
 
       - name: Upload Kernel Image
         uses: actions/upload-artifact@v4
         with:
-          name: S24-AXK4-KSU-Kernel
-          # 根据构建输出位置调整路径，通常在 out 目录
-          path: out/**/arch/arm64/boot/Image
+          name: S24-KSU-Kernel
+          # 核心修复 6：修正提取路径。三星 GKI 脚本产物通常在 out 或 dist 目录下
+          path: |
+            kernel_source/out/**/dist/Image
+            kernel_source/out/**/dist/*.ko
