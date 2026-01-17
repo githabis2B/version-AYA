@@ -1,0 +1,85 @@
+yaml
+name: Build Samsung S24 Kernel (AXK4)
+on:
+  workflow_dispatch: # 手动点击触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 设置 6 小时超时
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Maximize Build Space
+        # 清理 GitHub 磁盘空间，腾出约 30GB 用于编译中间件
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          # 必须开启大 Swap：16GB 虚拟内存是 7GB 物理内存存活的关键
+          swap-size-mb: 16384
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm
+
+      - name: Setup KernelSU & Patch Source
+        run: |
+          # 1. 注入 KernelSU
+          cd kernel_platform/common
+          curl -LSs "https://raw.githubusercontent.com" | bash -
+          
+          # 2. 物理删除 ABI 限制（解决 Wi-Fi/蓝牙由于指纹不符变灰的问题）
+          rm -f android/abi_gki_protected_exports_*
+          
+          # 3. 手术级修改 Defconfig (针对 Pineapple 平台)
+          DEFCONFIG="arch/arm64/configs/pineapple_gki_defconfig"
+          
+          # 开启 KSU 和 OverlayFS
+          echo "CONFIG_KSU=y" >> $DEFCONFIG
+          echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
+          
+          # 禁用三星安全拦截项 (参考 Littlenine/Yuzaki 逻辑)
+          sed -i 's/CONFIG_RKP_KDP=y/CONFIG_RKP_KDP=n/g' $DEFCONFIG
+          sed -i 's/CONFIG_RKP_NS_PROT=y/CONFIG_RKP_NS_PROT=n/g' $DEFCONFIG
+          sed -i 's/CONFIG_SECURITY_DEFEX=y/CONFIG_SECURITY_DEFEX=n/g' $DEFCONFIG
+          sed -i 's/CONFIG_SECURITY_DSMS=y/CONFIG_SECURITY_DSMS=n/g' $DEFCONFIG
+          sed -i 's/CONFIG_KNOX_KAP=y/CONFIG_KNOX_KAP=n/g' $DEFCONFIG
+          sed -i 's/CONFIG_FIVE=y/CONFIG_FIVE=n/g' $DEFCONFIG
+          
+          # 禁用 LTO：这是 GitHub 编译成功的核心，否则链接时必崩溃
+          sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
+          sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
+          echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
+          
+          # 禁用签名检查以加载官方驱动
+          sed -i 's/CONFIG_MODULE_SIG_FORCE=y/n/g' $DEFCONFIG
+          echo "CONFIG_MODULE_SIG=n" >> $DEFCONFIG
+
+      - name: Build Kernel (Using Official GKI Script)
+        run: |
+          # 赋予执行权限
+          chmod +x build_kernel_GKI.sh
+          chmod -R +x kernel_platform/tools/
+          chmod -R +x kernel_platform/build/
+          
+          # 设置 Bazel 内存与 CPU 限制，防止 OOM 导致任务关闭
+          export BAZEL_RAM=6144
+          export BAZEL_JOBS=2
+          
+          # 执行官方构建脚本（它会自动合并 vendor 里的屏幕和 Wi-Fi 驱动）
+          ./build_kernel_GKI.sh
+
+      - name: Upload Kernel Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: S24-AXK4-KSU-Kernel
+          # 根据构建输出位置调整路径，通常在 out 目录
+          path: out/**/arch/arm64/boot/Image
+          echo test, and deploy your project.
