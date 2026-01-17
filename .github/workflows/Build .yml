@@ -1,5 +1,7 @@
 yaml
-
+name: Build Samsung S24 Kernel (AXK4)
+on:
+  workflow_dispatch: # 手动点击触发
 
 jobs:
   build:
@@ -80,4 +82,3 @@ jobs:
           name: S24-AXK4-KSU-Kernel
           # 根据构建输出位置调整路径，通常在 out 目录
           path: out/**/arch/arm64/boot/Image
-          echo test, and deploy your project.
