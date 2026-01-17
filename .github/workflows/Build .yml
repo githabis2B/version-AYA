@@ -1,6 +1,5 @@
 yaml
-on:
-  workflow_dispatch: # 手动点击触发
+
 
 jobs:
   build:
