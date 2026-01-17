@@ -26,24 +26,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3-pip
 
+      - name: Debug Path
+        run: |
+          echo "当前工作目录内容："
+          ls -F
+          echo "-------------------"
+          # 自动寻找包含 build_kernel_GKI.sh 的目录并设为工作目录
+          BUILD_ROOT=$(find . -name "build_kernel_GKI.sh" -printf '%h\n' | head -n 1)
+          echo "BUILD_ROOT=$BUILD_ROOT" >> $GITHUB_ENV
+
       - name: Setup KernelSU and Patch Source
         run: |
-          # 核心修复 1：进入正确的路径
-          cd kernel_source/kernel_platform/common
+          # 自动定位 common 目录
+          COMMON_PATH=$(find . -name "common" -type d | grep "kernel_platform/common" | head -n 1)
+          if [ -z "$COMMON_PATH" ]; then echo "错误：找不到 common 目录"; exit 1; fi
           
-          # 核心修复 2：修正 KernelSU 注入脚本链接 (2026年推荐 KSU-Next)
+          cd "$COMMON_PATH"
+          # 注入 KernelSU
           curl -LSs "https://raw.githubusercontent.com" | bash -
           
-          # 3. 物理删除 ABI 限制
+          # 物理删除 ABI 限制（GKI 强制要求）
           rm -f android/abi_gki_protected_exports_*
           
-          # 核心修复 3：S24 属于 pineapple 平台，修正 defconfig 逻辑
-          # 优先修改 gki_defconfig，这是 GKI 编译的基准
+          # 修改 GKI 配置文件
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
-          # 禁用三星 RKP 和 Knox 安全检查
+          # 针对三星 S24 的关键补丁：禁用 RKP 和安全检查，否则无法开机
           sed -i 's/CONFIG_RKP_KDP=y/CONFIG_RKP_KDP=n/g' $DEFCONFIG
           sed -i 's/CONFIG_RKP_NS_PROT=y/CONFIG_RKP_NS_PROT=n/g' $DEFCONFIG
           sed -i 's/CONFIG_KNOX_KAP=y/CONFIG_KNOX_KAP=n/g' $DEFCONFIG
@@ -51,30 +60,31 @@ jobs:
           sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
           echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
 
-      - name: Build Kernel (Using Official GKI Script)
+      - name: Build Kernel
         run: |
-          # 核心修复 4：进入 build 脚本所在的 kernel_source 目录
-          cd kernel_source
+          # 使用之前 Debug 出来的路径
+          cd ${{ env.BUILD_ROOT }}
           
-          # 核心修复 5：赋予所有预编译工具链权限（这是 Bazel 运行的关键）
+          # 赋予权限（极其关键：解决 Permission Denied）
           chmod +x build_kernel_GKI.sh
-          find kernel_platform/tools/ -type f -exec chmod +x {} +
-          find kernel_platform/build/ -type f -exec chmod +x {} +
-          # 额外赋予内部 bazel 可执行权限
-          find kernel_platform/prebuilts/ -type f -name "bazel" -exec chmod +x {} +
+          # 递归赋予所有编译相关的 bin/tools 执行权限
+          find kernel_platform -type f -path "*/bin/*" -exec chmod +x {} +
+          find kernel_platform -type f -name "bazel*" -exec chmod +x {} +
+          find kernel_platform/build -type f -exec chmod +x {} +
           
-          # 设置内存与 CPU 限制
+          # 设置内存与核心限制，防止 GitHub 强制关闭任务
           export BAZEL_RAM=6144
           export BAZEL_JOBS=2
           
-          # 执行编译
+          # 运行构建脚本
           ./build_kernel_GKI.sh
 
       - name: Upload Kernel Image
         uses: actions/upload-artifact@v4
         with:
-          name: S24-KSU-Kernel
-          # 核心修复 6：修正提取路径。三星 GKI 脚本产物通常在 out 或 dist 目录下
+          name: S24-KSU-Kernel-Image
+          # 路径使用通配符以适应不同的构建变体
           path: |
-            kernel_source/out/**/dist/Image
-            kernel_source/out/**/dist/*.ko
+            **/out/**/dist/Image
+            **/out/**/dist/*.ko
+
