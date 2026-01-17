@@ -31,7 +31,7 @@ jobs:
       - name: Setup KernelSU & Patch Source
         run: |
           # 1. 注入 KernelSU
-          cd kernel_platform/common
+          cd kernel_source/kernel_platform/common
           curl -LSs "https://raw.githubusercontent.com" | bash -
           
           # 2. 物理删除 ABI 限制（解决 Wi-Fi/蓝牙由于指纹不符变灰的问题）
