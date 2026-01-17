@@ -1,5 +1,4 @@
 yaml
-name: Build Samsung S24 Kernel (AXK4)
 on:
   workflow_dispatch: # 手动点击触发
 
