@@ -8,7 +8,7 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Checkout Source
+      - name: Checkout Script
         uses: actions/checkout@v4
 
       - name: Maximize Build Space
@@ -26,65 +26,66 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3-pip
 
-      - name: Debug Path
+      - name: Download and Extract Source
         run: |
-          echo "当前工作目录内容："
-          ls -F
-          echo "-------------------"
-          # 自动寻找包含 build_kernel_GKI.sh 的目录并设为工作目录
-          BUILD_ROOT=$(find . -name "build_kernel_GKI.sh" -printf '%h\n' | head -n 1)
-          echo "BUILD_ROOT=$BUILD_ROOT" >> $GITHUB_ENV
+          # 1. 从你的 Release 下载源码包 (根据你的仓库 version-AYA)
+          # 注意：这里的 URL 需要是你 Release 附件的真实下载链接
+          echo "正在下载源码..."
+          # 建议使用 gh 命令行工具，它已经预装在虚拟机里
+          gh release download --repo ${{ github.repository }} --pattern '*.tar.gz'
+          
+          # 2. 解压源码
+          echo "正在解压..."
+          mkdir -p kernel_source
+          tar -zxf *.tar.gz -C kernel_source/ --strip-components=1 || tar -zxf *.tar.gz -C kernel_source/
+          
+          # 3. 验证
+          ls -F kernel_source/
 
-      - name: Setup KernelSU and Patch Source
+      - name: Setup KernelSU
         run: |
-          # 自动定位 common 目录
-          COMMON_PATH=$(find . -name "common" -type d | grep "kernel_platform/common" | head -n 1)
-          if [ -z "$COMMON_PATH" ]; then echo "错误：找不到 common 目录"; exit 1; fi
+          # 寻找 common 目录的绝对路径
+          COMMON_PATH=$(find $GITHUB_WORKSPACE/kernel_source -name "common" -type d | grep "kernel_platform/common" | head -n 1)
+          if [ -z "$COMMON_PATH" ]; then echo "错误：源码解压后未找到 common 目录"; exit 1; fi
+          echo "COMMON_DIR=$COMMON_PATH" >> $GITHUB_ENV
           
           cd "$COMMON_PATH"
-          # 注入 KernelSU
-          curl -LSs "https://raw.githubusercontent.com" | bash -
+          # 修正 KernelSU 注入地址
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
           
-          # 物理删除 ABI 限制（GKI 强制要求）
-          rm -f android/abi_gki_protected_exports_*
-          
-          # 修改 GKI 配置文件
+          # 修改配置以绕过三星 S24 的 RKP 检查
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          rm -f android/abi_gki_protected_exports_*
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
-          # 针对三星 S24 的关键补丁：禁用 RKP 和安全检查，否则无法开机
           sed -i 's/CONFIG_RKP_KDP=y/CONFIG_RKP_KDP=n/g' $DEFCONFIG
           sed -i 's/CONFIG_RKP_NS_PROT=y/CONFIG_RKP_NS_PROT=n/g' $DEFCONFIG
           sed -i 's/CONFIG_KNOX_KAP=y/CONFIG_KNOX_KAP=n/g' $DEFCONFIG
-          sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
-          sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
           echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
 
       - name: Build Kernel
         run: |
-          # 使用之前 Debug 出来的路径
-          cd ${{ env.BUILD_ROOT }}
+          # 寻找到包含 build_kernel_GKI.sh 的目录
+          BUILD_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "build_kernel_GKI.sh" -printf '%h\n' | head -n 1)
+          cd "$BUILD_ROOT"
           
-          # 赋予权限（极其关键：解决 Permission Denied）
+          # 赋予权限
           chmod +x build_kernel_GKI.sh
-          # 递归赋予所有编译相关的 bin/tools 执行权限
           find kernel_platform -type f -path "*/bin/*" -exec chmod +x {} +
           find kernel_platform -type f -name "bazel*" -exec chmod +x {} +
-          find kernel_platform/build -type f -exec chmod +x {} +
           
-          # 设置内存与核心限制，防止 GitHub 强制关闭任务
+          # 关键：2026年编译 S24 必须限制内存，否则 GitHub 虚拟机必崩
           export BAZEL_RAM=6144
           export BAZEL_JOBS=2
           
-          # 运行构建脚本
           ./build_kernel_GKI.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-      - name: Upload Kernel Image
+      - name: Upload Kernel
         uses: actions/upload-artifact@v4
         with:
-          name: S24-KSU-Kernel-Image
-          # 路径使用通配符以适应不同的构建变体
+          name: S24-Kernel-Result
           path: |
-            **/out/**/dist/Image
-            **/out/**/dist/*.ko
-
+            kernel_source/out/**/dist/Image
+            kernel_source/out/**/dist/*.ko
