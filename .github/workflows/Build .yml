@@ -1,4 +1,4 @@
-name: Build
+name: s24
 on:
   workflow_dispatch:
 
@@ -6,6 +6,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    permissions:
+      contents: read  # 允许读取 Release
 
     steps:
       - name: Checkout Script
@@ -24,43 +26,54 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3-pip
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3-pip unzip
 
       - name: Download and Extract Source
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # 1. 从你的 Release 下载源码包 (根据你的仓库 version-AYA)
-          # 注意：这里的 URL 需要是你 Release 附件的真实下载链接
           echo "正在下载源码..."
-          # 建议使用 gh 命令行工具，它已经预装在虚拟机里
-          gh release download --repo ${{ github.repository }} --pattern '*.tar.gz'
+          # 下载仓库中所有的压缩包（自动识别 .zip 或 .tar.gz）
+          gh release download --repo ${{ github.repository }} --pattern '*'
           
-          # 2. 解压源码
           echo "正在解压..."
           mkdir -p kernel_source
-          tar -zxf *.tar.gz -C kernel_source/ --strip-components=1 || tar -zxf *.tar.gz -C kernel_source/
+          # 自动根据后缀名解压
+          if ls *.zip 1> /dev/null 2>&1; then
+            unzip -q *.zip -d kernel_source/
+          elif ls *.tar.gz 1> /dev/null 2>&1; then
+            tar -zxf *.tar.gz -C kernel_source/
+          fi
           
-          # 3. 验证
+          # 检查解压后的层级，确保 kernel_platform 在根部
+          if [ -d "kernel_source/kernel_source" ]; then
+            mv kernel_source/kernel_source/* kernel_source/
+          fi
           ls -F kernel_source/
 
       - name: Setup KernelSU
         run: |
-          # 寻找 common 目录的绝对路径
+          # 自动递归寻找 common 目录
           COMMON_PATH=$(find $GITHUB_WORKSPACE/kernel_source -name "common" -type d | grep "kernel_platform/common" | head -n 1)
           if [ -z "$COMMON_PATH" ]; then echo "错误：源码解压后未找到 common 目录"; exit 1; fi
           echo "COMMON_DIR=$COMMON_PATH" >> $GITHUB_ENV
           
           cd "$COMMON_PATH"
-          # 修正 KernelSU 注入地址
+          # 补全 KernelSU 官方脚本地址
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
           
-          # 修改配置以绕过三星 S24 的 RKP 检查
+          # 修改配置以绕过三星 S24 的 RKP/KDP 检查（2026 关键点）
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
           rm -f android/abi_gki_protected_exports_*
+          
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
           sed -i 's/CONFIG_RKP_KDP=y/CONFIG_RKP_KDP=n/g' $DEFCONFIG
           sed -i 's/CONFIG_RKP_NS_PROT=y/CONFIG_RKP_NS_PROT=n/g' $DEFCONFIG
           sed -i 's/CONFIG_KNOX_KAP=y/CONFIG_KNOX_KAP=n/g' $DEFCONFIG
+          # 强制 LTO 为 NONE 以防 GitHub 虚拟机内存溢出
+          sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
+          sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
           echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
 
       - name: Build Kernel
@@ -69,23 +82,22 @@ jobs:
           BUILD_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "build_kernel_GKI.sh" -printf '%h\n' | head -n 1)
           cd "$BUILD_ROOT"
           
-          # 赋予权限
+          # 赋予工具链权限
           chmod +x build_kernel_GKI.sh
           find kernel_platform -type f -path "*/bin/*" -exec chmod +x {} +
           find kernel_platform -type f -name "bazel*" -exec chmod +x {} +
+          find kernel_platform -type f -name "clang*" -exec chmod +x {} +
           
-          # 关键：2026年编译 S24 必须限制内存，否则 GitHub 虚拟机必崩
+          # 设置资源限制，S24 构建非常消耗资源
           export BAZEL_RAM=6144
           export BAZEL_JOBS=2
           
           ./build_kernel_GKI.sh
-        env:
-          GH_TOKEN: ${{ github.token }}
 
       - name: Upload Kernel
         uses: actions/upload-artifact@v4
         with:
-          name: S24-Kernel-Result
+          name: S24-KSU-Kernel-$(date +%Y%m%d)
           path: |
             kernel_source/out/**/dist/Image
             kernel_source/out/**/dist/*.ko
