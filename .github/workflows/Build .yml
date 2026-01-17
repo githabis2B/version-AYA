@@ -28,37 +28,45 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm
 
-      - name: Setup KernelSU & Patch Source
+      - name: Setup KernelSU and Patch Source
         run: |
-          # 1. 注入 KernelSU
-          cd kernel_source/kernel_platform/common
+          # 1. 自动寻找 common 目录并进入
+          COMMON_PATH=$(find . -name "common" -type d | grep "kernel_platform/common" | head -n 1)
+          if [ -z "$COMMON_PATH" ]; then
+            echo "错误：无法在仓库中定位到 kernel_platform/common 路径！"
+            echo "当前目录下的文件树如下："
+            ls -R
+            exit 1
+          fi
+          echo "定位到目标目录: $COMMON_PATH"
+          cd "$COMMON_PATH"
+
+          # 2. 注入 KernelSU (修复 URL)
           curl -LSs "https://raw.githubusercontent.com" | bash -
           
-          # 2. 物理删除 ABI 限制（解决 Wi-Fi/蓝牙由于指纹不符变灰的问题）
+          # 3. 物理删除 ABI 限制
           rm -f android/abi_gki_protected_exports_*
           
-          # 3. 手术级修改 Defconfig (针对 Pineapple 平台)
+          # 4. 修改 Defconfig
+          # 针对 pineapple 平台，Android 14 (AXK4)
           DEFCONFIG="arch/arm64/configs/pineapple_gki_defconfig"
+          if [ ! -f "$DEFCONFIG" ]; then
+            DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          fi
           
-          # 开启 KSU 和 OverlayFS
+          echo "正在修改配置文件: $DEFCONFIG"
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
-          
-          # 禁用三星安全拦截项 (参考 Littlenine/Yuzaki 逻辑)
           sed -i 's/CONFIG_RKP_KDP=y/CONFIG_RKP_KDP=n/g' $DEFCONFIG
           sed -i 's/CONFIG_RKP_NS_PROT=y/CONFIG_RKP_NS_PROT=n/g' $DEFCONFIG
           sed -i 's/CONFIG_SECURITY_DEFEX=y/CONFIG_SECURITY_DEFEX=n/g' $DEFCONFIG
           sed -i 's/CONFIG_SECURITY_DSMS=y/CONFIG_SECURITY_DSMS=n/g' $DEFCONFIG
           sed -i 's/CONFIG_KNOX_KAP=y/CONFIG_KNOX_KAP=n/g' $DEFCONFIG
           sed -i 's/CONFIG_FIVE=y/CONFIG_FIVE=n/g' $DEFCONFIG
-          
-          # 禁用 LTO：这是 GitHub 编译成功的核心，否则链接时必崩溃
           sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
           sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
           echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
-          
-          # 禁用签名检查以加载官方驱动
-          sed -i 's/CONFIG_MODULE_SIG_FORCE=y/n/g' $DEFCONFIG
+          sed -i 's/CONFIG_MODULE_SIG_FORCE=y/CONFIG_MODULE_SIG_FORCE=n/g' $DEFCONFIG
           echo "CONFIG_MODULE_SIG=n" >> $DEFCONFIG
 
       - name: Build Kernel (Using Official GKI Script)
