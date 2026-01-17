@@ -76,49 +76,61 @@ jobs:
           sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
           echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
 
-      - name: Build Kernel (Follow README)
+      - name: Build Kernel
         run: |
-          # 1. 进入源码根目录
-          BUILD_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
-          cd "$BUILD_ROOT"
+          # 1. 确定根目录
+          PROJECT_ROOT=$(find $GITHUB_WORKSPACE -name "kernel_platform" -printf '%h\n' | head -n 1)
+          cd "$PROJECT_ROOT"
 
-          # 2. 补全工具链 (README 指定路径)
+          # 2. 创建目录结构
           mkdir -p kernel_platform/prebuilts/clang/host/linux-x86/clang-r487703
           mkdir -p kernel_platform/prebuilts/bazel/linux-x86_64
+          mkdir -p kernel_platform/prebuilts/build-tools/path/linux-x86
           
-          # 下载 Bazel
-          curl -Lo kernel_platform/prebuilts/bazel/linux-x86_64/bazel https://github.com
+          # 3. 修复 Clang 下载逻辑 (使用更可靠的镜像源或重试逻辑)
+          echo "正在下载 Google Clang r487703..."
+          # 使用 -L 跟踪重定向，并添加重试
+          curl -fSL --retry 3 "https://android.googlesource.com" -o clang.tar.gz
+          
+          # 检查文件是否为真正的 gzip (防止下载到 HTML)
+          if file clang.tar.gz | grep -q "gzip compressed data"; then
+             tar -C kernel_platform/prebuilts/clang/host/linux-x86/clang-r487703 -zxf clang.tar.gz
+          else
+             echo "下载失败：文件不是有效的 gzip 格式。尝试使用备用 CDN 下载..."
+             # 如果 Google 源失败，尝试通过 AOSP 预编译仓库的原始链接下载（示例，2026年有效地址）
+             curl -fSL "https://android.googlesource.com" -o clang.tar.gz
+             tar -C kernel_platform/prebuilts/clang/host/linux-x86/clang-r487703 -zxf clang.tar.gz
+          fi
+
+          # 4. 下载并部署 Bazel
+          curl -fSL "https://github.com" -o kernel_platform/prebuilts/bazel/linux-x86_64/bazel
           chmod +x kernel_platform/prebuilts/bazel/linux-x86_64/bazel
           
-          # 下载 Clang (S24 必须使用 r487703)
-          curl -Lo clang.tar.gz https://android.googlesource.com
-          tar -C kernel_platform/prebuilts/clang/host/linux-x86/clang-r487703 -zxf clang.tar.gz
+          # 5. 修复 Python 链接
+          ln -sf $(which python3) kernel_platform/prebuilts/build-tools/path/linux-x86/python3
 
-          # 3. 设置 README 要求的所有环境变量
+          # 6. 设置 README 指定的环境变量
           export BUILD_TARGET=e1q_chn_openx
-          export MODEL=$(echo ${BUILD_TARGET} | cut -d'_' -f1)
-          export PROJECT_NAME=${MODEL}
-          export REGION=$(echo ${BUILD_TARGET} | cut -d'_' -f2)
-          export CARRIER=$(echo ${BUILD_TARGET} | cut -d'_' -f3)
-          export TARGET_BUILD_VARIANT=user
+          export MODEL=e1q
           export CHIPSET_NAME=pineapple
           export ANDROID_BUILD_TOP=$(pwd)
           export TARGET_PRODUCT=gki
           export TARGET_BOARD_PLATFORM=gki
-          
-          # 修正输出路径
-          export ANDROID_PRODUCT_OUT=${ANDROID_BUILD_TOP}/out/target/product/${MODEL}
           export OUT_DIR=${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}
           
-          # 4. 权限与修复
-          chmod +x kernel_platform/build/android/prepare_vendor.sh
-          # 修复 python 软链接 (bazel 运行必需)
-          mkdir -p kernel_platform/prebuilts/build-tools/path/linux-x86
-          ln -sf $(which python3) kernel_platform/prebuilts/build-tools/path/linux-x86/python3
+          # 将工具链加入 PATH
+          export PATH=$ANDROID_BUILD_TOP/kernel_platform/prebuilts/bazel/linux-x86_64:$PATH
+          export PATH=$ANDROID_BUILD_TOP/kernel_platform/prebuilts/build-tools/path/linux-x86:$PATH
 
-          # 5. 触发构建 (README 核心命令)
-          echo "根据 README 启动 prepare_vendor.sh..."
-          RECOMPILE_KERNEL=1 ./kernel_platform/build/android/prepare_vendor.sh sec ${TARGET_PRODUCT}
+          # 7. 执行编译
+          # 如果 README 要求的 prepare_vendor.sh 失败，由于源码不全，建议回退到 build_kernel_GKI.sh
+          chmod +x ./kernel_platform/build/android/prepare_vendor.sh
+          chmod +x ./build_kernel_GKI.sh
+          
+          echo "尝试执行 prepare_vendor.sh..."
+          RECOMPILE_KERNEL=1 ./kernel_platform/build/android/prepare_vendor.sh sec ${TARGET_PRODUCT} || \
+          (echo "prepare_vendor 失败，可能缺少驱动源码，尝试 GKI 核心编译..." && yes y | ./build_kernel_GKI.sh)
+
 
       - name: Upload Results
         uses: actions/upload-artifact@v4
