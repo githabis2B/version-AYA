@@ -76,36 +76,57 @@ jobs:
           sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
           echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
 
-      - name: Build Kernel
+      - name: Build Kernel (Follow README)
         run: |
-          # 1. 定位构建根目录
-          BUILD_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "build_kernel_GKI.sh" -printf '%h\n' | head -n 1)
+          # 1. 进入源码根目录
+          BUILD_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
           cd "$BUILD_ROOT"
 
-          # 2. 修复 mktemp 报错：手动创建脚本预期的输出路径
-          mkdir -p out/target/product/e1q/
+          # 2. 补全工具链 (README 指定路径)
+          mkdir -p kernel_platform/prebuilts/clang/host/linux-x86/clang-r487703
+          mkdir -p kernel_platform/prebuilts/bazel/linux-x86_64
           
-          # 3. 核心修复：修复失效的 Python 软链接
-          # 日志显示脚本在 prebuilts 里找 python3 找不到，我们强行将其指向系统 Python
-          PY3_PATH="kernel_platform/prebuilts/build-tools/path/linux-x86/python3"
-          mkdir -p $(dirname "$PY3_PATH")
-          ln -sf $(which python3) "$PY3_PATH"
+          # 下载 Bazel
+          curl -Lo kernel_platform/prebuilts/bazel/linux-x86_64/bazel https://github.com
+          chmod +x kernel_platform/prebuilts/bazel/linux-x86_64/bazel
           
-          # 4. 赋予执行权限（针对解压后权限丢失的问题）
-          chmod +x build_kernel_GKI.sh
-          find kernel_platform -type f -name "bazel*" -exec chmod +x {} +
-          find kernel_platform -type f -name "python*" -exec chmod +x {} +
-          # 补充：对整个 prebuilts 目录下的 bin 目录提权
-          find kernel_platform/prebuilts -type d -name "bin" -exec chmod -R +x {} + 2>/dev/null || true
+          # 下载 Clang (S24 必须使用 r487703)
+          curl -Lo clang.tar.gz https://android.googlesource.com
+          tar -C kernel_platform/prebuilts/clang/host/linux-x86/clang-r487703 -zxf clang.tar.gz
+
+          # 3. 设置 README 要求的所有环境变量
+          export BUILD_TARGET=e1q_chn_openx
+          export MODEL=$(echo ${BUILD_TARGET} | cut -d'_' -f1)
+          export PROJECT_NAME=${MODEL}
+          export REGION=$(echo ${BUILD_TARGET} | cut -d'_' -f2)
+          export CARRIER=$(echo ${BUILD_TARGET} | cut -d'_' -f3)
+          export TARGET_BUILD_VARIANT=user
+          export CHIPSET_NAME=pineapple
+          export ANDROID_BUILD_TOP=$(pwd)
+          export TARGET_PRODUCT=gki
+          export TARGET_BOARD_PLATFORM=gki
           
-          # 5. 设置构建资源限制，防止虚拟机内存溢出 (OOM)
-          export BAZEL_RAM=6144
-          export BAZEL_JOBS=2
+          # 修正输出路径
+          export ANDROID_PRODUCT_OUT=${ANDROID_BUILD_TOP}/out/target/product/${MODEL}
+          export OUT_DIR=${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}
           
-          # 6. 核心修复：强制回答 y 并跳过交互
-          # 使用 yes 命令解决 "gki wasn't an option! Continue? [y/N] Exiting..." 导致的退出
-          echo "开始执行官方构建脚本..."
-          yes y | ./build_kernel_GKI.sh
+          # 4. 权限与修复
+          chmod +x kernel_platform/build/android/prepare_vendor.sh
+          # 修复 python 软链接 (bazel 运行必需)
+          mkdir -p kernel_platform/prebuilts/build-tools/path/linux-x86
+          ln -sf $(which python3) kernel_platform/prebuilts/build-tools/path/linux-x86/python3
+
+          # 5. 触发构建 (README 核心命令)
+          echo "根据 README 启动 prepare_vendor.sh..."
+          RECOMPILE_KERNEL=1 ./kernel_platform/build/android/prepare_vendor.sh sec ${TARGET_PRODUCT}
+
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: S24-Kernel-Output
+          path: |
+            kernel_source/out/**/boot/Image
+            kernel_source/out/**/*.ko
 
       - name: Upload Kernel
         uses: actions/upload-artifact@v4
