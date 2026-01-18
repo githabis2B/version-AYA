@@ -33,7 +33,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "正在下载源码..."
-          gh release download --repo ${{ github.repository }} --pattern 'Kernel.tar.gz' --clobber
+          gh release download kernel --repo ${{ github.repository }} --pattern 'Kernel.tar.gz' --clobber
           
           echo "正在解压源码..."
           mkdir -p kernel_source
