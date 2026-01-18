@@ -1,4 +1,4 @@
-name: Build-Samsung-S24-Kernel-AXK4
+name: blank
 on:
   workflow_dispatch:
 
@@ -6,8 +6,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    permissions:
+      contents: read
+
     steps:
-      - name: Checkout Source
+      - name: Checkout Script
         uses: actions/checkout@v4
 
       - name: Maximize Build Space
@@ -23,39 +26,121 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3-pip unzip p7zip-full
 
-      - name: Setup KernelSU and Patch Source
+      - name: Download and Extract Source
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cd kernel_platform/common
-          curl -LSs "https://raw.githubusercontent.com" | bash -
+          echo "正在下载源码..."
+          gh release download --repo ${{ github.repository }} --pattern '*'
+          
+          echo "正在解压源码..."
+          mkdir -p kernel_source
+          if ls *.zip 1> /dev/null 2>&1; then
+            unzip -q *.zip -d kernel_source/
+          elif ls *.tar.gz 1> /dev/null 2>&1; then
+            tar -zxf *.tar.gz -C kernel_source/
+          fi
+          
+          if [ -d "kernel_source/kernel_source" ]; then
+            mv kernel_source/kernel_source/* kernel_source/
+          fi
+
+      - name: Download and Setup Official Toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 1. 确定根目录
+          PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
+          cd "$PROJECT_ROOT"
+
+          echo "正在从 Release 下载三星官方工具链分卷..."
+          # 请确保 Release Tag 名为 S24_Tools
+          gh release download S24_Tools --repo ${{ github.repository }} --pattern 'toolchain.tar.tar.*'
+
+          echo "正在合并并解压分卷 (第一层)..."
+          # 7z 自动处理 .001, .002
+          7z x toolchain.tar.tar.001
+
+          echo "正在处理套娃结构 (第二层)..."
+          # 解出 toolchain.tar
+          tar -zxf toolchain.tar.gz
+
+          echo "正在解压到 prebuilts (第三层)..."
+          mkdir -p kernel_platform/prebuilts
+          # --strip-components=1 移除 toolchain/ 顶层目录直接放入 prebuilts
+          tar -xf toolchain.tar -C kernel_platform/prebuilts/ --strip-components=1
+
+          echo "正在清理大文件以释放磁盘空间..."
+          rm -f toolchain.tar.tar.* toolchain.tar.gz toolchain.tar
+
+          echo "验证工具链路径:"
+          ls -F kernel_platform/prebuilts/ | head -n 5
+
+      - name: Setup KernelSU
+        run: |
+          COMMON_PATH=$(find $GITHUB_WORKSPACE/kernel_source -name "common" -type d | grep "kernel_platform/common" | head -n 1)
+          if [ -z "$COMMON_PATH" ]; then echo "错误：未找到 common 目录"; exit 1; fi
+          echo "COMMON_DIR=$COMMON_PATH" >> $GITHUB_ENV
+          
+          cd "$COMMON_PATH"
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+          
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
           rm -f android/abi_gki_protected_exports_*
-          DEFCONFIG="arch/arm64/configs/pineapple_gki_defconfig"
+          
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
+          # 2026年 S24 构建必须禁用 RKP/KDP
           sed -i 's/CONFIG_RKP_KDP=y/CONFIG_RKP_KDP=n/g' $DEFCONFIG
           sed -i 's/CONFIG_RKP_NS_PROT=y/CONFIG_RKP_NS_PROT=n/g' $DEFCONFIG
-          sed -i 's/CONFIG_SECURITY_DEFEX=y/CONFIG_SECURITY_DEFEX=n/g' $DEFCONFIG
-          sed -i 's/CONFIG_SECURITY_DSMS=y/CONFIG_SECURITY_DSMS=n/g' $DEFCONFIG
           sed -i 's/CONFIG_KNOX_KAP=y/CONFIG_KNOX_KAP=n/g' $DEFCONFIG
-          sed -i 's/CONFIG_FIVE=y/CONFIG_FIVE=n/g' $DEFCONFIG
-          sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
-          sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
           echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
-          sed -i 's/CONFIG_MODULE_SIG_FORCE=y/n/g' $DEFCONFIG
-          echo "CONFIG_MODULE_SIG=n" >> $DEFCONFIG
 
       - name: Build Kernel
         run: |
-          chmod +x build_kernel_GKI.sh
-          chmod -R +x kernel_platform/tools/
-          chmod -R +x kernel_platform/build/
+          PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
+          cd "$PROJECT_ROOT"
+
+          # 修复官方工具链中的 Python 软链接
+          PY3_DIR="kernel_platform/prebuilts/build-tools/path/linux-x86"
+          mkdir -p "$PY3_DIR"
+          ln -sf $(which python3) "$PY3_DIR/python3"
+
+          # 按照 README 设置变量
+          export BUILD_TARGET=e1q_chn_openx
+          export MODEL=e1q
+          export CHIPSET_NAME=pineapple
+          export ANDROID_BUILD_TOP=$(pwd)
+          export TARGET_PRODUCT=gki
+          export TARGET_BOARD_PLATFORM=gki
+          export OUT_DIR=${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}
+          
+          # 将解压后的内置工具链加入 PATH
+          # 优先使用 prebuilts 里的 bazel 和工具
+          export PATH=$PWD/kernel_platform/prebuilts/bazel/linux-x86_64:$PATH
+          export PATH=$PWD/kernel_platform/prebuilts/build-tools/path/linux-x86:$PATH
+          
+          # 提权
+          chmod -R +x kernel_platform/prebuilts/
+          chmod +x ./kernel_platform/build/android/prepare_vendor.sh
+          chmod +x ./build_kernel_GKI.sh
+
+          # 资源限制防止 OOM
           export BAZEL_RAM=6144
           export BAZEL_JOBS=2
-          ./build_kernel_GKI.sh
+          
+          echo "开始基于官方工具链构建..."
+          RECOMPILE_KERNEL=1 ./kernel_platform/build/android/prepare_vendor.sh sec ${TARGET_PRODUCT} || \
+          (echo "prepare_vendor 失败，回退到标准 GKI 构建..." && yes y | ./build_kernel_GKI.sh)
 
-      - name: Upload Kernel Image
+      - name: Upload Kernel Output
         uses: actions/upload-artifact@v4
         with:
-          name: S24-AXK4-KSU-Kernel
-          path: out/**/arch/arm64/boot/Image
+          name: S24-Kernel-$(date +%Y%m%d)
+          path: |
+            kernel_source/out/**/boot/Image
+            kernel_source/out/**/dist/Image
+            kernel_source/out/**/*.ko
+
