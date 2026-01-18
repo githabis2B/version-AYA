@@ -34,7 +34,7 @@ jobs:
         run: |
           echo "正在下载源码..."
           # 下载仓库中所有的压缩包（自动识别 .zip 或 .tar.gz）
-          gh release download --repo ${{ github.repository }} --pattern '*'
+          gh release download --repo ${{ github.repository }} --pattern 'Kernel.tar.gz' --clobber
           
           echo "正在解压..."
           mkdir -p kernel_source
