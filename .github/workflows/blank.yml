@@ -97,6 +97,40 @@ jobs:
           ls -F kernel_platform/prebuilts/ | head -n 10
 
 
+      - name: Setup KernelSU and Security Patches
+        run: |
+          COMMON_PATH=$(find $GITHUB_WORKSPACE/kernel_source -name "common" -type d | grep "kernel_platform/common" | head -n 1)
+          cd "$COMMON_PATH"
+
+          # 1. 集成 KernelSU
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+
+          # 2. 修改 Defconfig (采用 Littlenine 的禁用逻辑)
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          
+          # 禁用三星 RKP/KDP/DEFEX (核心安全机制)
+          sed -i 's/CONFIG_RKP_KDP=y/CONFIG_RKP_KDP=n/g' $DEFCONFIG
+          sed -i 's/CONFIG_RKP_NS_PROT=y/CONFIG_RKP_NS_PROT=n/g' $DEFCONFIG
+          sed -i 's/CONFIG_SECURITY_DEFEX=y/CONFIG_SECURITY_DEFEX=n/g' $DEFCONFIG
+          
+          # 禁用 Littlenine 提到的其他干扰项
+          echo "CONFIG_UH=n" >> $DEFCONFIG
+          echo "CONFIG_FIVE=n" >> $DEFCONFIG
+          echo "CONFIG_INTEGRITY=n" >> $DEFCONFIG
+          
+          # 重要：禁用 TRIM_UNUSED_KSYMS (确保 KSU 能找到符号)
+          echo "CONFIG_TRIM_UNUSED_KSYMS=n" >> $DEFCONFIG
+          sed -i 's/CONFIG_TRIM_UNUSED_KSYMS=y/CONFIG_TRIM_UNUSED_KSYMS=n/g' $DEFCONFIG
+
+          # 禁用 LTO 以确保 GitHub 虚拟机不会 OOM (内存溢出)
+          sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
+          sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
+          echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
+
+          # 物理删除 ABI 保护文件
+          rm -f android/abi_gki_protected_exports_*
+
+
       - name: Build Kernel
         run: |
           PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
