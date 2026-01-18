@@ -1,4 +1,4 @@
-name: s24
+name: blank22
 on:
   workflow_dispatch:
 
@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
-      contents: read  # 允许读取 Release
+      contents: read
 
     steps:
       - name: Checkout Script
@@ -26,90 +26,138 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3-pip unzip
-
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3-pip unzip p7zip-full
       - name: Download and Extract Source
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "正在下载源码..."
-          # 下载仓库中所有的压缩包（自动识别 .zip 或 .tar.gz）
-          gh release download --repo ${{ github.repository }} --pattern 'Kernel.tar.gz' --clobber
+          gh release download kernel --repo ${{ github.repository }} --pattern 'Kernel.tar.gz' --clobber
           
-          echo "正在解压..."
+          echo "正在解压源码..."
           mkdir -p kernel_source
-          # 自动根据后缀名解压
           if ls *.zip 1> /dev/null 2>&1; then
             unzip -q *.zip -d kernel_source/
           elif ls *.tar.gz 1> /dev/null 2>&1; then
             tar -zxf *.tar.gz -C kernel_source/
           fi
           
-          # 检查解压后的层级，确保 kernel_platform 在根部
           if [ -d "kernel_source/kernel_source" ]; then
             mv kernel_source/kernel_source/* kernel_source/
           fi
-          ls -F kernel_source/
-
-      - name: Setup KernelSU
+      - name: Download and Setup Official Toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # 自动递归寻找 common 目录
+          # 1. 确定工作根目录
+          PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
+          cd "$PROJECT_ROOT"
+          echo "正在下载工具链分卷..."
+          gh release download S24_Tools --repo ${{ github.repository }} --pattern 'toolchain.tar.tar.*' --clobber
+          echo "正在合并并提取分卷 (7z)..."
+          # 7z 会直接从 .001 提取出里面的压缩包
+          7z x toolchain.tar.tar.001 -y
+          
+          # 【关键调试步骤】列出当前文件，看看 7z 到底解压出了什么
+          echo "检查当前目录下文件："
+          ls -lh
+          
+          # 2. 物理定位解压出来的压缩包 (自动处理命名不一致)
+          GZ_FILE=$(ls *.tar.gz 2>/dev/null | head -n 1)
+          if [ -z "$GZ_FILE" ]; then
+            echo "错误：未发现 .tar.gz 文件，尝试查找 .tar"
+            TAR_FILE=$(ls *.tar 2>/dev/null | head -n 1)
+          else
+            echo "发现压缩包: $GZ_FILE，正在解压缩为 .tar..."
+            # 使用 gunzip 保持文件名一致性，这样更节省空间且稳定
+            gunzip -f "$GZ_FILE"
+            TAR_FILE=$(ls *.tar 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$TAR_FILE" ]; then
+            echo "错误：无法定位到任何 .tar 文件！"
+            ls -R
+            exit 1
+          fi
+          echo "最终解压 $TAR_FILE 到 prebuilts..."
+          mkdir -p kernel_platform/prebuilts
+          # 执行最终解压
+          tar -xf "$TAR_FILE" -C kernel_platform/prebuilts/ --strip-components=1
+          echo "清理临时大文件..."
+          rm -f toolchain.tar.tar.*
+          rm -f *.tar
+          
+          echo "工具链就位！验证路径："
+          ls -F kernel_platform/prebuilts/ | head -n 10
+      - name: Setup KernelSU and Security Patches
+        run: |
           COMMON_PATH=$(find $GITHUB_WORKSPACE/kernel_source -name "common" -type d | grep "kernel_platform/common" | head -n 1)
-          if [ -z "$COMMON_PATH" ]; then echo "错误：源码解压后未找到 common 目录"; exit 1; fi
-          echo "COMMON_DIR=$COMMON_PATH" >> $GITHUB_ENV
-          
           cd "$COMMON_PATH"
-          # 补全 KernelSU 官方脚本地址
+
+          # 1. 集成 KernelSU
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
-          
-          # 修改配置以绕过三星 S24 的 RKP/KDP 检查（2026 关键点）
+
+          # 2. 修改 Defconfig
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          rm -f android/abi_gki_protected_exports_*
-          
-          echo "CONFIG_KSU=y" >> $DEFCONFIG
-          echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
-          sed -i 's/CONFIG_RKP_KDP=y/CONFIG_RKP_KDP=n/g' $DEFCONFIG
-          sed -i 's/CONFIG_RKP_NS_PROT=y/CONFIG_RKP_NS_PROT=n/g' $DEFCONFIG
-          sed -i 's/CONFIG_KNOX_KAP=y/CONFIG_KNOX_KAP=n/g' $DEFCONFIG
-          # 强制 LTO 为 NONE 以防 GitHub 虚拟机内存溢出
+
+          # 禁用列表：包含 UH、RKP、PROCA、DEFEX 等所有安全校验项
+          REJECT_LIST=(
+            CONFIG_RKP_KDP
+            CONFIG_RKP_NS_PROT
+            CONFIG_RKP_CFP
+            CONFIG_RKP_CFP_JOPP
+            CONFIG_UH
+            CONFIG_UH_RKP
+            CONFIG_UH_LKMAUTH
+            CONFIG_UH_LKM_BLOCK
+            CONFIG_SECURITY_DEFEX
+            CONFIG_SECURITY_SAMSUNG_PROCA
+            CONFIG_PROCA
+            CONFIG_FIVE
+            CONFIG_SEC_ABC
+            CONFIG_SEC_RESTRICT_SETUID
+            CONFIG_INTEGRITY
+          )
+
+          for item in "${REJECT_LIST[@]}"; do
+            # 物理删除所有已存在的配置行（无论 y 还是 n），防止重复或冲突
+            sed -i "/$item/d" $DEFCONFIG
+            # 统一添加禁用指令
+            echo "$item=n" >> $DEFCONFIG
+          done
+
+          # 3. 针对 KernelSU 的特殊兼容处理
+          # 禁用 TRIM_UNUSED_KSYMS (确保 KSU 能找到内核符号)
+          sed -i '/CONFIG_TRIM_UNUSED_KSYMS/d' $DEFCONFIG
+          echo "CONFIG_TRIM_UNUSED_KSYMS=n" >> $DEFCONFIG
+
+          # 强制 SELinux 宽容模式 (解决 2002-45 激活报错的关键)
+          sed -i '/CONFIG_SECURITY_SELINUX_DEVELOP/d' $DEFCONFIG
+          echo "CONFIG_SECURITY_SELINUX_DEVELOP=y" >> $DEFCONFIG
+          sed -i '/CONFIG_SECURITY_SELINUX_BOOTPARAM/d' $DEFCONFIG
+          echo "CONFIG_SECURITY_SELINUX_BOOTPARAM=y" >> $DEFCONFIG
+          echo "CONFIG_SECURITY_SELINUX_BOOTPARAM_VALUE=0" >> $DEFCONFIG
+
+          # 4. 禁用 LTO 以防止构建环境 OOM
           sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
           sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
+          sed -i '/CONFIG_LTO_NONE/d' $DEFCONFIG
           echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
 
+          # 5. 物理清理 ABI 保护，防止导出符号被拦截
+          rm -f android/abi_gki_protected_exports_*
+          
+          echo "Defconfig 安全机制禁用完成。"
+
+          
       - name: Build Kernel
         run: |
-          # 1. 确定根目录
-          PROJECT_ROOT=$(find $GITHUB_WORKSPACE -name "kernel_platform" -printf '%h\n' | head -n 1)
+          PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
           cd "$PROJECT_ROOT"
-
-          # 2. 创建目录结构
-          mkdir -p kernel_platform/prebuilts/clang/host/linux-x86/clang-r487703
-          mkdir -p kernel_platform/prebuilts/bazel/linux-x86_64
-          mkdir -p kernel_platform/prebuilts/build-tools/path/linux-x86
-          
-          # 3. 修复 Clang 下载逻辑 (使用更可靠的镜像源或重试逻辑)
-          echo "正在下载 Google Clang r487703..."
-          # 使用 -L 跟踪重定向，并添加重试
-          curl -fSL --retry 3 "https://android.googlesource.com" -o clang.tar.gz
-          
-          # 检查文件是否为真正的 gzip (防止下载到 HTML)
-          if file clang.tar.gz | grep -q "gzip compressed data"; then
-             tar -C kernel_platform/prebuilts/clang/host/linux-x86/clang-r487703 -zxf clang.tar.gz
-          else
-             echo "下载失败：文件不是有效的 gzip 格式。尝试使用备用 CDN 下载..."
-             # 如果 Google 源失败，尝试通过 AOSP 预编译仓库的原始链接下载（示例，2026年有效地址）
-             curl -fSL "https://android.googlesource.com" -o clang.tar.gz
-             tar -C kernel_platform/prebuilts/clang/host/linux-x86/clang-r487703 -zxf clang.tar.gz
-          fi
-
-          # 4. 下载并部署 Bazel
-          curl -fSL "https://github.com" -o kernel_platform/prebuilts/bazel/linux-x86_64/bazel
-          chmod +x kernel_platform/prebuilts/bazel/linux-x86_64/bazel
-          
-          # 5. 修复 Python 链接
-          ln -sf $(which python3) kernel_platform/prebuilts/build-tools/path/linux-x86/python3
-
-          # 6. 设置 README 指定的环境变量
+          # 修复官方工具链中的 Python 软链接
+          PY3_DIR="kernel_platform/prebuilts/build-tools/path/linux-x86"
+          mkdir -p "$PY3_DIR"
+          ln -sf $(which python3) "$PY3_DIR/python3"
+          # 按照 README 设置变量
           export BUILD_TARGET=e1q_chn_openx
           export MODEL=e1q
           export CHIPSET_NAME=pineapple
@@ -118,32 +166,27 @@ jobs:
           export TARGET_BOARD_PLATFORM=gki
           export OUT_DIR=${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}
           
-          # 将工具链加入 PATH
-          export PATH=$ANDROID_BUILD_TOP/kernel_platform/prebuilts/bazel/linux-x86_64:$PATH
-          export PATH=$ANDROID_BUILD_TOP/kernel_platform/prebuilts/build-tools/path/linux-x86:$PATH
-
-          # 7. 执行编译
-          # 如果 README 要求的 prepare_vendor.sh 失败，由于源码不全，建议回退到 build_kernel_GKI.sh
+          # 将解压后的内置工具链加入 PATH
+          # 优先使用 prebuilts 里的 bazel 和工具
+          export PATH=$PWD/kernel_platform/prebuilts/bazel/linux-x86_64:$PATH
+          export PATH=$PWD/kernel_platform/prebuilts/build-tools/path/linux-x86:$PATH
+          
+          # 提权
+          chmod -R +x kernel_platform/prebuilts/
           chmod +x ./kernel_platform/build/android/prepare_vendor.sh
           chmod +x ./build_kernel_GKI.sh
+          # 资源限制防止 OOM
+          export BAZEL_RAM=6144
+          export BAZEL_JOBS=2
           
-          echo "尝试执行 prepare_vendor.sh..."
+          echo "开始基于官方工具链构建..."
           RECOMPILE_KERNEL=1 ./kernel_platform/build/android/prepare_vendor.sh sec ${TARGET_PRODUCT} || \
-          (echo "prepare_vendor 失败，可能缺少驱动源码，尝试 GKI 核心编译..." && yes y | ./build_kernel_GKI.sh)
-
-
-      - name: Upload Results
+          (echo "prepare_vendor 失败，回退到标准 GKI 构建..." && yes y | ./build_kernel_GKI.sh)
+      - name: Upload Kernel Output
         uses: actions/upload-artifact@v4
         with:
-          name: S24-Kernel-Output
+          name: S24-Kernel-$(date +%Y%m%d)
           path: |
             kernel_source/out/**/boot/Image
-            kernel_source/out/**/*.ko
-
-      - name: Upload Kernel
-        uses: actions/upload-artifact@v4
-        with:
-          name: S24-KSU-Kernel-$(date +%Y%m%d)
-          path: |
             kernel_source/out/**/dist/Image
-            kernel_source/out/**/dist/*.ko
+            kernel_source/out/**/*.ko
