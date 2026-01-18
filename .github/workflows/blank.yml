@@ -51,52 +51,51 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 1. 确定根目录
+          # 1. 确定工作根目录
           PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
           cd "$PROJECT_ROOT"
 
-          echo "正在从 Release 下载三星官方工具链分卷..."
-          # 请确保 Release Tag 名为 S24_Tools
-          gh release download S24_Tools --repo ${{ github.repository }} --pattern 'toolchain.tar.tar.*'
+          echo "正在下载工具链分卷..."
+          gh release download S24_Tools --repo ${{ github.repository }} --pattern 'toolchain.tar.tar.*' --clobber
 
-          echo "正在合并并解压分卷 (第一层)..."
-          # 7z 自动处理 .001, .002
-          7z x toolchain.tar.tar.001
+          echo "正在合并并提取分卷 (7z)..."
+          # 7z 会直接从 .001 提取出里面的压缩包
+          7z x toolchain.tar.tar.001 -y
+          
+          # 【关键调试步骤】列出当前文件，看看 7z 到底解压出了什么
+          echo "检查当前目录下文件："
+          ls -lh
+          
+          # 2. 物理定位解压出来的压缩包 (自动处理命名不一致)
+          GZ_FILE=$(ls *.tar.gz 2>/dev/null | head -n 1)
+          if [ -z "$GZ_FILE" ]; then
+            echo "错误：未发现 .tar.gz 文件，尝试查找 .tar"
+            TAR_FILE=$(ls *.tar 2>/dev/null | head -n 1)
+          else
+            echo "发现压缩包: $GZ_FILE，正在解压缩为 .tar..."
+            # 使用 gunzip 保持文件名一致性，这样更节省空间且稳定
+            gunzip -f "$GZ_FILE"
+            TAR_FILE=$(ls *.tar 2>/dev/null | head -n 1)
+          fi
 
-          echo "正在处理套娃结构 (第二层)..."
-          # 解出 toolchain.tar
-          tar -zxf toolchain.tar.gz
+          if [ -z "$TAR_FILE" ]; then
+            echo "错误：无法定位到任何 .tar 文件！"
+            ls -R
+            exit 1
+          fi
 
-          echo "正在解压到 prebuilts (第三层)..."
+          echo "最终解压 $TAR_FILE 到 prebuilts..."
           mkdir -p kernel_platform/prebuilts
-          # --strip-components=1 移除 toolchain/ 顶层目录直接放入 prebuilts
-          tar -xf toolchain.tar -C kernel_platform/prebuilts/ --strip-components=1
+          # 执行最终解压
+          tar -xf "$TAR_FILE" -C kernel_platform/prebuilts/ --strip-components=1
 
-          echo "正在清理大文件以释放磁盘空间..."
-          rm -f toolchain.tar.tar.* toolchain.tar.gz toolchain.tar
+          echo "清理临时大文件..."
+          rm -f toolchain.tar.tar.*
+          rm -f *.tar
+          
+          echo "工具链就位！验证路径："
+          ls -F kernel_platform/prebuilts/ | head -n 10
 
-          echo "验证工具链路径:"
-          ls -F kernel_platform/prebuilts/ | head -n 5
-
-      - name: Setup KernelSU
-        run: |
-          COMMON_PATH=$(find $GITHUB_WORKSPACE/kernel_source -name "common" -type d | grep "kernel_platform/common" | head -n 1)
-          if [ -z "$COMMON_PATH" ]; then echo "错误：未找到 common 目录"; exit 1; fi
-          echo "COMMON_DIR=$COMMON_PATH" >> $GITHUB_ENV
-          
-          cd "$COMMON_PATH"
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
-          
-          DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          rm -f android/abi_gki_protected_exports_*
-          
-          echo "CONFIG_KSU=y" >> $DEFCONFIG
-          echo "CONFIG_OVERLAY_FS=y" >> $DEFCONFIG
-          # 2026年 S24 构建必须禁用 RKP/KDP
-          sed -i 's/CONFIG_RKP_KDP=y/CONFIG_RKP_KDP=n/g' $DEFCONFIG
-          sed -i 's/CONFIG_RKP_NS_PROT=y/CONFIG_RKP_NS_PROT=n/g' $DEFCONFIG
-          sed -i 's/CONFIG_KNOX_KAP=y/CONFIG_KNOX_KAP=n/g' $DEFCONFIG
-          echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
 
       - name: Build Kernel
         run: |
