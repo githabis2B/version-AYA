@@ -1,4 +1,4 @@
-name: blank
+name: The first
 on:
   workflow_dispatch:
 
