@@ -1,4 +1,4 @@
-name: blank22
+name: 开机跳出系统已损坏
 on:
   workflow_dispatch:
 
