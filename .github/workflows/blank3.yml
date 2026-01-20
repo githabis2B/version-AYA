@@ -191,47 +191,22 @@ jobs:
                     ../vendor/qcom/opensource/securemsm-kernel/Module.symvers \
                     "
 
+          # 2. 预创建输出目录
+          echo "正在预创建输出目录..."
+          mkdir -p "$ANDROID_PRODUCT_OUT"
+          mkdir -p "$OUT_DIR"
 
+          # 3. 进入内核平台目录
+          cd ./kernel_platform
 
+          # 4. 寻找并执行标准的 build.sh
+          RECOMPILE_KERNEL=1 ./build/build.sh 2>&1 | tee -a ../build.log
+          
 
-          # 这将找到 kernel_platform 所在的父目录绝对路径
-          REAL_ROOT=$(find "$GITHUB_WORKSPACE" -name "kernel_platform" -type d | head -n 1)
-          PROJECT_ROOT=$(dirname "$REAL_ROOT")
+          # 5. 执行构建
+          echo "启动标准 GKI 构建流程..."
+          "$BUILD_SH_PATH" 2>&1 | tee -a ../build.log
 
-          # 检查路径是否有效，防止 cd 到根目录 /
-          if [ -z "$PROJECT_ROOT" ] || [ "$PROJECT_ROOT" = "/" ]; then
-              echo "错误：无法正确定位 kernel_source 路径！"
-              exit 1
-          fi
-
-          cd "$PROJECT_ROOT"
-          echo "当前工作目录: $(pwd)"
-
-          # 2. 设置必要变量
-          export MODEL="e1q"
-          export ANDROID_BUILD_TOP=$(pwd)
-          # ... 其他 export 变量保持不变 ...
-
-          # 3. 预创建目录（此时变量已确保不为空）
-          mkdir -p "${ANDROID_BUILD_TOP}/out/target/product/${MODEL}"
-
-          # 4. 进入平台目录并动态寻找 build.sh
-          cd kernel_platform
-          # 动态寻找 build.sh 的位置（兼容不同版本的目录结构）
-          BUILD_SH_PATH=$(find . -name "build.sh" | head -n 1)
-
-          if [ -f "$BUILD_SH_PATH" ]; then
-              echo "找到构建脚本: $BUILD_SH_PATH"
-              chmod +x "$BUILD_SH_PATH"
-    
-              # 5. 执行构建 (带上环境变量确保生效)
-              TARGET_BOARD_PLATFORM=gki VENDOR_NAME=sec SKIP_MRPROPER=1 \
-              "$BUILD_SH_PATH" 2>&1 | tee -a ../build.log
-          else
-              echo "错误：找不到 build.sh！"
-              ls -R
-              exit 1
-          fi
 
         
 
