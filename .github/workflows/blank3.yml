@@ -212,10 +212,16 @@ jobs:
               fi
 
 
-
-          # 3. 执行标准 build.sh (绕过三星的 prepare_vendor.sh)
+          # 3. 进入编译平台目录
           cd kernel_platform
-          SKIP_MRPROPER=1 RECOMPILE_KERNEL=1 ./build/build.sh 2>&1 | tee -a ../build.log
+          # 4. 关键：给脚本执行权限（防止权限问题也报这个错）
+          chmod +x ./build/build.sh
+          
+          # 5. 执行编译
+          ./build/build.sh 2>&1 | tee -a ../build.log
+
+
+        
 
 
 
