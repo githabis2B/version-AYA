@@ -118,12 +118,12 @@ jobs:
             -d KNOX_KNOX_NCM \
             -d SECURITY_DSMS \
             -d SECURITY_KUMIHO \
-            -d MODULE_SIG
+            -d MODULE_SIG 
           
-          # Littlenine 提到的其他干扰项 禁用
+          # 开启KernelSU
+          echo "CONFIG_KSU=y" >> $DEFCONFIG
+          # Littlenine 提到的其他干扰项 源码里没有 手动加上
           echo "CONFIG_INTEGRITY=n" >> $DEFCONFIG
-
-
           # 重要：禁用 TRIM_UNUSED_KSYMS (确保 KSU 能找到符号)
           echo "CONFIG_TRIM_UNUSED_KSYMS=n" >> $DEFCONFIG
           
