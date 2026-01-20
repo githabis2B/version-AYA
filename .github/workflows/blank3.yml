@@ -159,11 +159,38 @@ jobs:
           export BAZEL_JOBS=2
 
           #修复变量
-          export MODEL="e1q"
-          export CHIPSET_NAME="pineapple"
-          export TARGET_PRODUCT="gki"
+          #1. target config
+          BUILD_TARGET=e1q_chn_openx
+          export MODEL=$(echo $BUILD_TARGET | cut -d'_' -f1)
+          export PROJECT_NAME=${MODEL}
+          export REGION=$(echo $BUILD_TARGET | cut -d'_' -f2)
+          export CARRIER=$(echo $BUILD_TARGET | cut -d'_' -f3)
+          export TARGET_BUILD_VARIANT=user
+          
+          #2. sm8650 common config
+          CHIPSET_NAME=pineapple
+
           export ANDROID_BUILD_TOP=$(pwd)
-          export OUT_DIR="${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}"
+          export TARGET_PRODUCT=gki
+          export TARGET_BOARD_PLATFORM=gki
+          export ANDROID_PRODUCT_OUT=${ANDROID_BUILD_TOP}/out/target/product/${MODEL}
+          export OUT_DIR=${ANDROID_BUILD_TOP}/out/msm-${CHIPSET_NAME}-${CHIPSET_NAME}-${TARGET_PRODUCT}
+          
+          export KBUILD_EXT_MODULES="\
+                    ../vendor/qcom/opensource/display-drivers/msm \
+                    ../vendor/qcom/opensource/camera-kernel \
+                    ../vendor/qcom/opensource/audio-kernel \
+                    ../vendor/qcom/opensource/dsp-kernel \
+                    "
+
+          export  KBUILD_DISPLAY_EXTRA_SYMBOLS="\
+                    ../vendor/qcom/opensource/mmrm-driver/Module.symvers \
+                    ../vendor/qcom/opensource/mm-drivers/sync_fence/Module.symvers \
+                    ../vendor/qcom/opensource/mm-drivers/msm_ext_display/Module.symvers \
+                    ../vendor/qcom/opensource/mm-drivers/hw_fence/Module.symvers \
+                    ../vendor/qcom/opensource/securemsm-kernel/Module.symvers \
+                    "
+
 
 
 
@@ -184,10 +211,13 @@ jobs:
                   exit 1
               fi
 
-          
-          echo "开始基于官方工具链构建..."
-          RECOMPILE_KERNEL=1 ./kernel_platform/build/android/prepare_vendor.sh sec ${TARGET_PRODUCT} || \
-          (echo "prepare_vendor 失败，回退到标准 GKI 构建..." && yes y | ./build_kernel_GKI.sh)
+
+
+          # 3. 执行标准 build.sh (绕过三星的 prepare_vendor.sh)
+          cd kernel_platform
+          SKIP_MRPROPER=1 RECOMPILE_KERNEL=1 ./build/build.sh 2>&1 | tee -a ../build.log
+
+
 
       - name: Upload Kernel Output
         uses: actions/upload-artifact@v4
