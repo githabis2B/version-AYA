@@ -134,74 +134,68 @@ jobs:
 
       - name: Build Kernel
         run: |
-          PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
+          # 1. 精准定位项目根目录
+          REAL_PLATFORM=$(find "$GITHUB_WORKSPACE" -name "kernel_platform" -type d -print -quit)
+          PROJECT_ROOT=$(dirname "$REAL_PLATFORM")
           cd "$PROJECT_ROOT"
+          echo "项目根目录: $(pwd)"
 
-          # 修复官方工具链中的 Python 软链接
+          # 2. 修复 Python 软链接（基于当前绝对路径）
           PY3_DIR="kernel_platform/prebuilts/build-tools/path/linux-x86"
           mkdir -p "$PY3_DIR"
           ln -sf $(which python3) "$PY3_DIR/python3"
-
-         
           
-          # 将解压后的内置工具链加入 PATH
-          # 优先使用 prebuilts 里的 bazel 和工具
+          # 3. 设置工具链 PATH
           export PATH=$PWD/kernel_platform/prebuilts/bazel/linux-x86_64:$PATH
           export PATH=$PWD/kernel_platform/prebuilts/build-tools/path/linux-x86:$PATH
           
-          # 提权
-          chmod -R +x kernel_platform/prebuilts/
-          chmod +x ./kernel_platform/build/android/prepare_vendor.sh
-          chmod +x ./build_kernel_GKI.sh
+          # 4. 修复可能的软链接丢失
+          if [ ! -f "kernel_platform/build/build.sh" ]; then
+              echo "警告：未找到 build.sh，尝试重建链接..."
+              mkdir -p kernel_platform/build
+              # 搜索物理原件
+              REAL_SH=$(find kernel_platform -name "build.sh" -path "*/kernel/build/*" -print -quit)
+              if [ -n "$REAL_SH" ]; then
+                  ln -sf "$(pwd)/$REAL_SH" kernel_platform/build/build.sh
+                  echo "已手动链接: $REAL_SH"
+              fi
+          fi
 
-          # 资源限制防止 OOM
-          export BAZEL_RAM=6144
-          export BAZEL_JOBS=2
-
-          #修复变量
-          #1. target config
-          BUILD_TARGET=e1q_chn_openx
+          # 5. 设置 2026 编译核心变量
+          export BUILD_TARGET=e1q_chn_openx
           export MODEL=$(echo $BUILD_TARGET | cut -d'_' -f1)
-          export PROJECT_NAME=${MODEL}
-          export REGION=$(echo $BUILD_TARGET | cut -d'_' -f2)
-          export CARRIER=$(echo $BUILD_TARGET | cut -d'_' -f3)
-          export TARGET_BUILD_VARIANT=user
-          
-          #2. sm8650 common config
-          CHIPSET_NAME=pineapple
-
+          export CHIPSET_NAME=pineapple
           export ANDROID_BUILD_TOP=$(pwd)
           export TARGET_PRODUCT=gki
           export TARGET_BOARD_PLATFORM=gki
-          export ANDROID_PRODUCT_OUT=${ANDROID_BUILD_TOP}/out/target/product/${MODEL}
-          export OUT_DIR=${ANDROID_BUILD_TOP}/out/msm-${CHIPSET_NAME}-${CHIPSET_NAME}-${TARGET_PRODUCT}
-          
-          export KBUILD_EXT_MODULES="\
-                    ../vendor/qcom/opensource/display-drivers/msm \
-                    ../vendor/qcom/opensource/camera-kernel \
-                    ../vendor/qcom/opensource/audio-kernel \
-                    ../vendor/qcom/opensource/dsp-kernel \
-                    "
+          export VENDOR_NAME=sec
+          export RECOMPILE_KERNEL=1
+          export SKIP_MRPROPER=1
+          export BAZEL_RAM=6144
+          export BAZEL_JOBS=2
 
-          export  KBUILD_DISPLAY_EXTRA_SYMBOLS="\
-                    ../vendor/qcom/opensource/mmrm-driver/Module.symvers \
-                    ../vendor/qcom/opensource/mm-drivers/sync_fence/Module.symvers \
-                    ../vendor/qcom/opensource/mm-drivers/msm_ext_display/Module.symvers \
-                    ../vendor/qcom/opensource/mm-drivers/hw_fence/Module.symvers \
-                    ../vendor/qcom/opensource/securemsm-kernel/Module.symvers \
-                    "
+          # 修正输出路径
+          export ANDROID_PRODUCT_OUT="${ANDROID_BUILD_TOP}/out/target/product/${MODEL}"
+          export OUT_DIR="${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}"
 
-          # 2. 预创建输出目录
-          echo "正在预创建输出目录..."
+          # 6. 预创建输出目录
           mkdir -p "$ANDROID_PRODUCT_OUT"
           mkdir -p "$OUT_DIR"
 
-          # 3. 进入内核平台目录
-          cd ./kernel_platform
-
-          # 4. 寻找并执行标准的 build.sh
-          RECOMPILE_KERNEL=1 SKIP_MRPROPER=1 ./build/build.sh 2>&1 | tee -a ../build.log
+          # 7. 提权并进入平台执行
+          chmod -R +x kernel_platform/prebuilts/ 2>/dev/null || true
+          chmod +x kernel_platform/build/build.sh 2>/dev/null || true
           
+          cd kernel_platform
+          if [ -f "./build/build.sh" ]; then
+              echo "✅ 启动标准 GKI 构建流程..."
+              ./build/build.sh 2>&1 | tee -a ../build.log
+          else
+              echo "❌ 错误：彻底找不到 build.sh！"
+              ls -R | head -n 100
+              exit 1
+          fi
+
 
 
 
