@@ -200,15 +200,9 @@ jobs:
           cd ./kernel_platform
 
           # 4. 寻找并执行标准的 build.sh
-          RECOMPILE_KERNEL=1 ./build/build.sh 2>&1 | tee -a ../build.log
+          RECOMPILE_KERNEL=1 SKIP_MRPROPER=1 ./build/build.sh 2>&1 | tee -a ../build.log
           
 
-          # 5. 执行构建
-          echo "启动标准 GKI 构建流程..."
-          "$BUILD_SH_PATH" 2>&1 | tee -a ../build.log
-
-
-        
 
 
 
