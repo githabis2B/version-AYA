@@ -139,63 +139,70 @@ jobs:
 
       - name: Build Kernel
         run: |
-          # 1. 精准定位项目根目录
+          # 1. 自动定位项目根目录
           REAL_PLATFORM=$(find "$GITHUB_WORKSPACE" -name "kernel_platform" -type d -print -quit)
           PROJECT_ROOT=$(dirname "$REAL_PLATFORM")
           cd "$PROJECT_ROOT"
           echo "项目根目录: $(pwd)"
 
-          # 2. 修复官方工具链中的 Python 软链接
-          PY3_DIR="kernel_platform/prebuilts/build-tools/path/linux-x86"
-          mkdir -p "$PY3_DIR"
-          ln -sf $(which python3) "$PY3_DIR/python3"
-
-          # 3. 设置并导出环境变量
+          # 2. 设置并导出 2026 核心环境变量 (移植自 build_kernel_GKI.sh)
           export BUILD_TARGET=e1q_chn_openx
-          export MODEL=e1q
+          export MODEL=$(echo $BUILD_TARGET | cut -d'_' -f1)
           export CHIPSET_NAME=pineapple
           export TARGET_PRODUCT=gki
           export TARGET_BOARD_PLATFORM=gki
           export VENDOR_NAME=sec
           export ANDROID_BUILD_TOP=$(pwd)
+          
+          # 修正 OUT_DIR 路径重复问题，并设置为绝对路径
           export ANDROID_PRODUCT_OUT="${ANDROID_BUILD_TOP}/out/target/product/${MODEL}"
           export OUT_DIR="${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}"
           
-          # 【核心】2026年拦截配置抹除的关键变量
+          # 核心保护变量：防止 KernelSU 配置被抹除
           export RECOMPILE_KERNEL=1
           export SKIP_MRPROPER=1
           export STOP_SHIP_CHECKS=1
-          
+
+          # 3. 驱动模块路径修复 (使用绝对路径，防止 cd 后失效)
+          export KBUILD_EXT_MODULES=" \
+            ${ANDROID_BUILD_TOP}/vendor/qcom/opensource/display-drivers/msm \
+            ${ANDROID_BUILD_TOP}/vendor/qcom/opensource/camera-kernel \
+            ${ANDROID_BUILD_TOP}/vendor/qcom/opensource/audio-kernel \
+            ${ANDROID_BUILD_TOP}/vendor/qcom/opensource/dsp-kernel"
+
           # 4. 预创建输出目录 (解决 mktemp 报错)
-          echo "正在预创建输出目录..."
           mkdir -p "$ANDROID_PRODUCT_OUT"
           mkdir -p "$OUT_DIR"
-          
-          # 5. 目录对齐：修复回退构建时常见的 awk 路径报错
-          if [ -d "msm-kernel" ]; then
-              ln -sf "$(pwd)/msm-kernel" "kernel_platform/msm-kernel"
-              echo "✅ 已完成 msm-kernel 物理路径对齐"
-          fi
 
-          # 6. 设置工具链 PATH 和资源限制
+          # 5. 修复官方工具链 Python 环境
+          PY3_DIR="kernel_platform/prebuilts/build-tools/path/linux-x86"
+          mkdir -p "$PY3_DIR"
+          ln -sf $(which python3) "$PY3_DIR/python3"
           export PATH=$PWD/kernel_platform/prebuilts/bazel/linux-x86_64:$PATH
           export PATH=$PWD/kernel_platform/prebuilts/build-tools/path/linux-x86:$PATH
-          export BAZEL_RAM=6144
-          export BAZEL_JOBS=2
           
+          # 6. 物理路径对齐：确保 kernel_platform 内部能找到 vendor 符号
+          # 解决 awk: can't open file .../gki_system_dlkm_modules 报错
+          if [ -d "vendor" ]; then
+            ln -sf "$(pwd)/vendor" "kernel_platform/vendor"
+            echo "✅ 已完成 vendor 物理路径对齐"
+          fi
+          if [ -d "msm-kernel" ]; then
+            ln -sf "$(pwd)/msm-kernel" "kernel_platform/msm-kernel"
+          fi
+
           # 7. 提权
           chmod -R +x kernel_platform/prebuilts/
-          chmod +x ./kernel_platform/build/android/prepare_vendor.sh
-          chmod +x ./build_kernel_GKI.sh
+          chmod +x kernel_platform/build/android/prepare_vendor.sh
 
-          # 8. 执行构建 (修正了末尾的逻辑断层)
-          echo "开始基于官方工具链构建..."
-          # 优先尝试官方脚本，如果失败，回退到进入 kernel_platform 执行标准 build.sh
-          # 注意：SKIP_MRPROPER=1 保证了你的 KernelSU 配置不会被重置
-          RECOMPILE_KERNEL=1 SKIP_MRPROPER=1 ./kernel_platform/build/android/prepare_vendor.sh sec ${TARGET_PRODUCT} 2>&1 | tee -a build.log || \
-          (echo "⚠️ prepare_vendor 失败，回退到标准构建..." && \
+          # 8. 执行构建逻辑 (带回退方案)
+          echo "🚀 启动构建流程..."
+          # 优先尝试三星官方 prepare_vendor 流程 (带上 SKIP_MRPROPER 保护配置)
+          ./kernel_platform/build/android/prepare_vendor.sh ${CHIPSET_NAME} gki 2>&1 | tee -a build.log || \
+          (echo "⚠️ prepare_vendor 失败，尝试标准 build.sh 构建..." && \
            cd kernel_platform && \
-           RECOMPILE_KERNEL=1 SKIP_MRPROPER=1 ./build/build.sh 2>&1 | tee -a ../build.log)
+           ./build/build.sh 2>&1 | tee -a ../build.log)
+
 
 
 
