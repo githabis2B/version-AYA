@@ -212,14 +212,31 @@ jobs:
               fi
 
 
-          # 3. 进入编译平台目录
-          cd kernel_platform
-          # 4. 关键：给脚本执行权限（防止权限问题也报这个错）
-          chmod +x ./build/build.sh
-          
-          # 5. 执行编译
-          ./build/build.sh 2>&1 | tee -a ../build.log
+          # 1. 确保进入了正确的 kernel_platform 目录
+          PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
+          cd "$PROJECT_ROOT/kernel_platform"
 
+          # 2. 自动检测并赋予权限（解决路径层级问题）
+          # 在三星源码中，build.sh 可能在 ./build/build.sh 或 ./kernel/build/build.sh
+          REAL_BUILD_SH=$(find . -name "build.sh" | head -n 1)
+
+          if [ -z "$REAL_BUILD_SH" ]; then
+              echo "错误：在此目录下找不到 build.sh，当前目录内容如下："
+              ls -R
+              exit 1
+          fi
+
+          echo "找到构建脚本：$REAL_BUILD_SH"
+          chmod +x "$REAL_BUILD_SH"
+
+          # 3. 设置环境参数（必须在执行前）
+          export TARGET_BOARD_PLATFORM=gki
+          export VENDOR_NAME=sec
+          export SKIP_MRPROPER=1
+
+          # 4. 执行编译
+          # 注意：一定要用刚才找到的真实路径
+          $REAL_BUILD_SH 2>&1 | tee -a ../build.log
 
         
 
