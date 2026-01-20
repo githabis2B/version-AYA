@@ -133,40 +133,67 @@ jobs:
 
       - name: Build Kernel
         run: |
-          PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
+          # 1. 精准定位项目根目录
+          REAL_PLATFORM=$(find "$GITHUB_WORKSPACE" -name "kernel_platform" -type d -print -quit)
+          PROJECT_ROOT=$(dirname "$REAL_PLATFORM")
           cd "$PROJECT_ROOT"
+          echo "项目根目录: $(pwd)"
 
-          # 修复官方工具链中的 Python 软链接
+          # 2. 修复官方工具链中的 Python 软链接
           PY3_DIR="kernel_platform/prebuilts/build-tools/path/linux-x86"
           mkdir -p "$PY3_DIR"
           ln -sf $(which python3) "$PY3_DIR/python3"
 
-          # 按照 README 设置变量
+          # 3. 设置并导出环境变量
           export BUILD_TARGET=e1q_chn_openx
           export MODEL=e1q
           export CHIPSET_NAME=pineapple
-          export ANDROID_BUILD_TOP=$(pwd)
           export TARGET_PRODUCT=gki
           export TARGET_BOARD_PLATFORM=gki
-          export OUT_DIR=${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}
+          export VENDOR_NAME=sec
+          export ANDROID_BUILD_TOP=$(pwd)
+          export ANDROID_PRODUCT_OUT="${ANDROID_BUILD_TOP}/out/target/product/${MODEL}"
+          export OUT_DIR="${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}"
           
-          # 将解压后的内置工具链加入 PATH
-          # 优先使用 prebuilts 里的 bazel 和工具
+          # 【核心】2026年拦截配置抹除的关键变量
+          export RECOMPILE_KERNEL=1
+          export SKIP_MRPROPER=1
+          export STOP_SHIP_CHECKS=1
+          
+          # 4. 预创建输出目录 (解决 mktemp 报错)
+          echo "正在预创建输出目录..."
+          mkdir -p "$ANDROID_PRODUCT_OUT"
+          mkdir -p "$OUT_DIR"
+          
+          # 5. 目录对齐：修复回退构建时常见的 awk 路径报错
+          if [ -d "msm-kernel" ]; then
+              ln -sf "$(pwd)/msm-kernel" "kernel_platform/msm-kernel"
+              echo "✅ 已完成 msm-kernel 物理路径对齐"
+          fi
+
+          # 6. 设置工具链 PATH 和资源限制
           export PATH=$PWD/kernel_platform/prebuilts/bazel/linux-x86_64:$PATH
           export PATH=$PWD/kernel_platform/prebuilts/build-tools/path/linux-x86:$PATH
+          export BAZEL_RAM=6144
+          export BAZEL_JOBS=2
           
-          # 提权
+          # 7. 提权
           chmod -R +x kernel_platform/prebuilts/
           chmod +x ./kernel_platform/build/android/prepare_vendor.sh
           chmod +x ./build_kernel_GKI.sh
 
-          # 资源限制防止 OOM
-          export BAZEL_RAM=6144
-          export BAZEL_JOBS=2
-          
+          # 8. 执行构建 (修正了末尾的逻辑断层)
           echo "开始基于官方工具链构建..."
-          RECOMPILE_KERNEL=1 ./kernel_platform/build/android/prepare_vendor.sh sec ${TARGET_PRODUCT} || \
-          (echo "prepare_vendor 失败，回退到标准 GKI 构建..." && yes y | ./build_kernel_GKI.sh)
+          # 优先尝试官方脚本，如果失败，回退到进入 kernel_platform 执行标准 build.sh
+          # 注意：SKIP_MRPROPER=1 保证了你的 KernelSU 配置不会被重置
+          RECOMPILE_KERNEL=1 SKIP_MRPROPER=1 ./kernel_platform/build/android/prepare_vendor.sh sec ${TARGET_PRODUCT} 2>&1 | tee -a build.log || \
+          (echo "⚠️ prepare_vendor 失败，回退到标准构建..." && \
+           cd kernel_platform && \
+           RECOMPILE_KERNEL=1 SKIP_MRPROPER=1 ./build/build.sh 2>&1 | tee -a ../build.log)
+
+
+          
+          
 
       - name: Upload Kernel Output
         uses: actions/upload-artifact@v4
