@@ -158,6 +158,12 @@ jobs:
           export BAZEL_RAM=6144
           export BAZEL_JOBS=2
 
+          #修复变量
+          export MODEL="e1q"
+          export CHIPSET_NAME="pineapple"
+          export TARGET_PRODUCT="gki"
+          export ANDROID_BUILD_TOP=$(pwd)
+          export OUT_DIR="${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}"
 
 
 
@@ -177,23 +183,6 @@ jobs:
                   echo "错误：无法创建目录！"
                   exit 1
               fi
-
-
-
-
-
-
-
-
-
-
-
- 
-
-
-
-
-
 
           
           echo "开始基于官方工具链构建..."
