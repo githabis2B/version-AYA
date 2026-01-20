@@ -142,14 +142,7 @@ jobs:
           mkdir -p "$PY3_DIR"
           ln -sf $(which python3) "$PY3_DIR/python3"
 
-          # 按照 README 设置变量
-          export BUILD_TARGET=e1q_chn_openx
-          export MODEL=e1q
-          export CHIPSET_NAME=pineapple
-          export ANDROID_BUILD_TOP=$(pwd)
-          export TARGET_PRODUCT=gki
-          export TARGET_BOARD_PLATFORM=gki
-          export OUT_DIR=${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}
+         
           
           # 将解压后的内置工具链加入 PATH
           # 优先使用 prebuilts 里的 bazel 和工具
@@ -164,6 +157,44 @@ jobs:
           # 资源限制防止 OOM
           export BAZEL_RAM=6144
           export BAZEL_JOBS=2
+
+
+
+
+          # === 关键修复：强制预创建所有可能用到的输出目录 ===
+          echo "正在预创建输出目录以防止 mktemp 失败..."
+          # 创建基础输出目录
+          mkdir -p ${ANDROID_BUILD_TOP}/out
+          mkdir -p ${OUT_DIR}
+          # 创建特定机型的输出目录（即报错信息里缺少的那个）
+          # 使用 -p 确保即使中间目录不存在也会一并创建
+          mkdir -p ${ANDROID_BUILD_TOP}/out/target/product/${MODEL}
+          
+          # 验证目录是否创建成功
+          if [ -d "${ANDROID_BUILD_TOP}/out/target/product/${MODEL}" ]; then
+              echo "目录创建成功: ${ANDROID_BUILD_TOP}/out/target/product/${MODEL}"
+              else
+                  echo "错误：无法创建目录！"
+                  exit 1
+              fi
+
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+
+
+
           
           echo "开始基于官方工具链构建..."
           RECOMPILE_KERNEL=1 ./kernel_platform/build/android/prepare_vendor.sh sec ${TARGET_PRODUCT} || \
