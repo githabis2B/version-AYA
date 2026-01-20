@@ -1,0 +1,178 @@
+name: blank
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Script
+        uses: actions/checkout@v4
+
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          swap-size-mb: 16384
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm python3-pip unzip p7zip-full
+
+      - name: Download and Extract Source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "正在下载源码..."
+          gh release download kernel --repo ${{ github.repository }} --pattern 'Kernel.tar.gz' --clobber
+          
+          echo "正在解压源码..."
+          mkdir -p kernel_source
+          if ls *.zip 1> /dev/null 2>&1; then
+            unzip -q *.zip -d kernel_source/
+          elif ls *.tar.gz 1> /dev/null 2>&1; then
+            tar -zxf *.tar.gz -C kernel_source/
+          fi
+          
+          if [ -d "kernel_source/kernel_source" ]; then
+            mv kernel_source/kernel_source/* kernel_source/
+          fi
+
+      - name: Download and Setup Official Toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 1. 确定工作根目录
+          PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
+          cd "$PROJECT_ROOT"
+
+          echo "正在下载工具链分卷..."
+          gh release download S24_Tools --repo ${{ github.repository }} --pattern 'toolchain.tar.tar.*' --clobber
+
+          echo "正在合并并提取分卷 (7z)..."
+          # 7z 会直接从 .001 提取出里面的压缩包
+          7z x toolchain.tar.tar.001 -y
+          
+          # 【关键调试步骤】列出当前文件，看看 7z 到底解压出了什么
+          echo "检查当前目录下文件："
+          ls -lh
+          
+          # 2. 物理定位解压出来的压缩包 (自动处理命名不一致)
+          GZ_FILE=$(ls *.tar.gz 2>/dev/null | head -n 1)
+          if [ -z "$GZ_FILE" ]; then
+            echo "错误：未发现 .tar.gz 文件，尝试查找 .tar"
+            TAR_FILE=$(ls *.tar 2>/dev/null | head -n 1)
+          else
+            echo "发现压缩包: $GZ_FILE，正在解压缩为 .tar..."
+            # 使用 gunzip 保持文件名一致性，这样更节省空间且稳定
+            gunzip -f "$GZ_FILE"
+            TAR_FILE=$(ls *.tar 2>/dev/null | head -n 1)
+          fi
+
+          if [ -z "$TAR_FILE" ]; then
+            echo "错误：无法定位到任何 .tar 文件！"
+            ls -R
+            exit 1
+          fi
+
+          echo "最终解压 $TAR_FILE 到 prebuilts..."
+          mkdir -p kernel_platform/prebuilts
+          # 执行最终解压
+          tar -xf "$TAR_FILE" -C kernel_platform/prebuilts/ --strip-components=1
+
+          echo "清理临时大文件..."
+          rm -f toolchain.tar.tar.*
+          rm -f *.tar
+          
+          echo "工具链就位！验证路径："
+          ls -F kernel_platform/prebuilts/ | head -n 10
+
+
+      - name: Setup KernelSU and Security Patches
+        run: |
+          COMMON_PATH=$(find $GITHUB_WORKSPACE/kernel_source -name "common" -type d | grep "kernel_platform/common" | head -n 1)
+          cd "$COMMON_PATH"
+
+          # 1. 集成 KernelSU
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+
+          # 2. 修改 Defconfig (采用 Littlenine 的禁用逻辑)
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          
+          # 禁用三星 RKP/KDP/DEFEX (核心安全机制)
+          sed -i 's/CONFIG_RKP_KDP=y/CONFIG_RKP_KDP=n/g' $DEFCONFIG
+          sed -i 's/CONFIG_RKP_NS_PROT=y/CONFIG_RKP_NS_PROT=n/g' $DEFCONFIG
+          sed -i 's/CONFIG_SECURITY_DEFEX=y/CONFIG_SECURITY_DEFEX=n/g' $DEFCONFIG
+          
+          # 禁用 Littlenine 提到的其他干扰项
+          echo "CONFIG_UH=n" >> $DEFCONFIG
+          echo "CONFIG_FIVE=n" >> $DEFCONFIG
+          echo "CONFIG_INTEGRITY=n" >> $DEFCONFIG
+          
+          # 重要：禁用 TRIM_UNUSED_KSYMS (确保 KSU 能找到符号)
+          echo "CONFIG_TRIM_UNUSED_KSYMS=n" >> $DEFCONFIG
+          sed -i 's/CONFIG_TRIM_UNUSED_KSYMS=y/CONFIG_TRIM_UNUSED_KSYMS=n/g' $DEFCONFIG
+
+          # 禁用 LTO 以确保 GitHub 虚拟机不会 OOM (内存溢出)
+          sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
+          sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
+          echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
+
+          # 物理删除 ABI 保护文件
+          rm -f android/abi_gki_protected_exports_*
+
+
+      - name: Build Kernel
+        run: |
+          PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
+          cd "$PROJECT_ROOT"
+
+          # 修复官方工具链中的 Python 软链接
+          PY3_DIR="kernel_platform/prebuilts/build-tools/path/linux-x86"
+          mkdir -p "$PY3_DIR"
+          ln -sf $(which python3) "$PY3_DIR/python3"
+
+          # 按照 README 设置变量
+          export BUILD_TARGET=e1q_chn_openx
+          export MODEL=e1q
+          export CHIPSET_NAME=pineapple
+          export ANDROID_BUILD_TOP=$(pwd)
+          export TARGET_PRODUCT=gki
+          export TARGET_BOARD_PLATFORM=gki
+          export OUT_DIR=${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}
+          
+          # 将解压后的内置工具链加入 PATH
+          # 优先使用 prebuilts 里的 bazel 和工具
+          export PATH=$PWD/kernel_platform/prebuilts/bazel/linux-x86_64:$PATH
+          export PATH=$PWD/kernel_platform/prebuilts/build-tools/path/linux-x86:$PATH
+          
+          # 提权
+          chmod -R +x kernel_platform/prebuilts/
+          chmod +x ./kernel_platform/build/android/prepare_vendor.sh
+          chmod +x ./build_kernel_GKI.sh
+
+          # 资源限制防止 OOM
+          export BAZEL_RAM=6144
+          export BAZEL_JOBS=2
+          
+          echo "开始基于官方工具链构建..."
+          RECOMPILE_KERNEL=1 ./kernel_platform/build/android/prepare_vendor.sh sec ${TARGET_PRODUCT} || \
+          (echo "prepare_vendor 失败，回退到标准 GKI 构建..." && yes y | ./build_kernel_GKI.sh)
+
+      - name: Upload Kernel Output
+        uses: actions/upload-artifact@v4
+        with:
+          name: S24-Kernel-$(date +%Y%m%d)
+          path: |
+            kernel_source/out/**/boot/Image
+            kernel_source/out/**/dist/Image
+            kernel_source/out/**/*.ko
