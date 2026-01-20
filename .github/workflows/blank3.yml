@@ -132,15 +132,15 @@ jobs:
           rm -f android/abi_gki_protected_exports_*
 
 
+
       - name: Build Kernel
         run: |
-          # 1. 精准定位
+          # 1. 定位
           REAL_PLATFORM=$(find "$GITHUB_WORKSPACE" -name "kernel_platform" -type d -print -quit)
           PROJECT_ROOT=$(dirname "$REAL_PLATFORM")
           cd "$PROJECT_ROOT"
-          echo "当前目录: $(pwd)"
 
-          # 2. 设置 2026 编译核心变量 (必须在执行前 export)
+          # 2. 设置变量
           export BUILD_TARGET=e1q_chn_openx
           export MODEL=$(echo $BUILD_TARGET | cut -d'_' -f1)
           export CHIPSET_NAME=pineapple
@@ -152,8 +152,6 @@ jobs:
           export SKIP_MRPROPER=1
           export BAZEL_RAM=6144
           export BAZEL_JOBS=2
-
-          # 路径修正
           export ANDROID_PRODUCT_OUT="${ANDROID_BUILD_TOP}/out/target/product/${MODEL}"
           export OUT_DIR="${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}"
 
@@ -161,30 +159,38 @@ jobs:
           mkdir -p "$ANDROID_PRODUCT_OUT"
           mkdir -p "$OUT_DIR"
 
-          # 4. 修复 Python 软链接 (基于当前绝对路径)
+          # 4. 修复 Python 软链接
           PY3_DIR="kernel_platform/prebuilts/build-tools/path/linux-x86"
           mkdir -p "$PY3_DIR"
           ln -sf $(which python3) "$PY3_DIR/python3"
           export PATH=$PWD/kernel_platform/prebuilts/bazel/linux-x86_64:$PATH
           export PATH=$PWD/kernel_platform/prebuilts/build-tools/path/linux-x86:$PATH
 
-          # 5. 执行构建 (根据 ls 结果，直接指向 ./build/build.sh)
+          # 5. 【核心修复】寻找真实的物理脚本并执行
           cd kernel_platform
           
-          # 直接赋予权限并执行，不再进行复杂的搜索
-          if [ -f "build/build.sh" ]; then
-              echo "✅ 找到构建脚本: build/build.sh"
-              chmod +x build/build.sh
-              chmod +x build/_setup_env.sh 2>/dev/null || true
-              
-              echo "🚀 启动标准 GKI 构建流程..."
-              # 直接调用脚本
-              ./build/build.sh 2>&1 | tee -a ../build.log
-          else
-              echo "❌ 严重错误：在 $(pwd) 下仍未找到 build/build.sh"
-              ls -F build/
-              exit 1
+          # 放弃那个带 @ 的坏链接，直接找真实的 build.sh
+          # 三星 2026 源码真正的脚本通常在 kernel/build/build.sh
+          REAL_SH=$(find . -maxdepth 4 -name "build.sh" -not -path "./build/build.sh" | head -n 1)
+
+          if [ -z "$REAL_SH" ]; then
+              echo "❌ 无法找到物理存在的 build.sh，尝试使用备选脚本..."
+              # 如果连物理文件都找不到，尝试直接运行三星环境脚本
+              REAL_SH="./build/_setup_env.sh" 
           fi
+
+          echo "🚀 最终确定的构建脚本路径: $REAL_SH"
+          
+          # 重新建立链接以防脚本内部依赖
+          mkdir -p build
+          ln -sf "../$REAL_SH" build/build.sh 2>/dev/null || true
+          
+          chmod +x "$REAL_SH"
+          chmod +x ./build/_setup_env.sh 2>/dev/null || true
+          
+          # 执行编译
+          "$REAL_SH" 2>&1 | tee -a ../build.log
+
 
 
 
