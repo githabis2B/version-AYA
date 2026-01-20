@@ -134,34 +134,13 @@ jobs:
 
       - name: Build Kernel
         run: |
-          # 1. 精准定位项目根目录
+          # 1. 精准定位
           REAL_PLATFORM=$(find "$GITHUB_WORKSPACE" -name "kernel_platform" -type d -print -quit)
           PROJECT_ROOT=$(dirname "$REAL_PLATFORM")
           cd "$PROJECT_ROOT"
-          echo "项目根目录: $(pwd)"
+          echo "当前目录: $(pwd)"
 
-          # 2. 修复 Python 软链接（基于当前绝对路径）
-          PY3_DIR="kernel_platform/prebuilts/build-tools/path/linux-x86"
-          mkdir -p "$PY3_DIR"
-          ln -sf $(which python3) "$PY3_DIR/python3"
-          
-          # 3. 设置工具链 PATH
-          export PATH=$PWD/kernel_platform/prebuilts/bazel/linux-x86_64:$PATH
-          export PATH=$PWD/kernel_platform/prebuilts/build-tools/path/linux-x86:$PATH
-          
-          # 4. 修复可能的软链接丢失
-          if [ ! -f "kernel_platform/build/build.sh" ]; then
-              echo "警告：未找到 build.sh，尝试重建链接..."
-              mkdir -p kernel_platform/build
-              # 搜索物理原件
-              REAL_SH=$(find kernel_platform -name "build.sh" -path "*/kernel/build/*" -print -quit)
-              if [ -n "$REAL_SH" ]; then
-                  ln -sf "$(pwd)/$REAL_SH" kernel_platform/build/build.sh
-                  echo "已手动链接: $REAL_SH"
-              fi
-          fi
-
-          # 5. 设置 2026 编译核心变量
+          # 2. 设置 2026 编译核心变量 (必须在执行前 export)
           export BUILD_TARGET=e1q_chn_openx
           export MODEL=$(echo $BUILD_TARGET | cut -d'_' -f1)
           export CHIPSET_NAME=pineapple
@@ -174,27 +153,39 @@ jobs:
           export BAZEL_RAM=6144
           export BAZEL_JOBS=2
 
-          # 修正输出路径
+          # 路径修正
           export ANDROID_PRODUCT_OUT="${ANDROID_BUILD_TOP}/out/target/product/${MODEL}"
           export OUT_DIR="${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}"
 
-          # 6. 预创建输出目录
+          # 3. 预创建输出目录
           mkdir -p "$ANDROID_PRODUCT_OUT"
           mkdir -p "$OUT_DIR"
 
-          # 7. 提权并进入平台执行
-          chmod -R +x kernel_platform/prebuilts/ 2>/dev/null || true
-          chmod +x kernel_platform/build/build.sh 2>/dev/null || true
-          
+          # 4. 修复 Python 软链接 (基于当前绝对路径)
+          PY3_DIR="kernel_platform/prebuilts/build-tools/path/linux-x86"
+          mkdir -p "$PY3_DIR"
+          ln -sf $(which python3) "$PY3_DIR/python3"
+          export PATH=$PWD/kernel_platform/prebuilts/bazel/linux-x86_64:$PATH
+          export PATH=$PWD/kernel_platform/prebuilts/build-tools/path/linux-x86:$PATH
+
+          # 5. 执行构建 (根据 ls 结果，直接指向 ./build/build.sh)
           cd kernel_platform
-          if [ -f "./build/build.sh" ]; then
-              echo "✅ 启动标准 GKI 构建流程..."
+          
+          # 直接赋予权限并执行，不再进行复杂的搜索
+          if [ -f "build/build.sh" ]; then
+              echo "✅ 找到构建脚本: build/build.sh"
+              chmod +x build/build.sh
+              chmod +x build/_setup_env.sh 2>/dev/null || true
+              
+              echo "🚀 启动标准 GKI 构建流程..."
+              # 直接调用脚本
               ./build/build.sh 2>&1 | tee -a ../build.log
           else
-              echo "❌ 错误：彻底找不到 build.sh！"
-              ls -R | head -n 100
+              echo "❌ 严重错误：在 $(pwd) 下仍未找到 build/build.sh"
+              ls -F build/
               exit 1
           fi
+
 
 
 
