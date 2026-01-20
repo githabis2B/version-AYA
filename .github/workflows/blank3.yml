@@ -194,49 +194,44 @@ jobs:
 
 
 
-          # === 关键修复：强制预创建所有可能用到的输出目录 ===
-          echo "正在预创建输出目录以防止 mktemp 失败..."
-          # 创建基础输出目录
-          mkdir -p ${ANDROID_BUILD_TOP}/out
-          mkdir -p ${OUT_DIR}
-          # 创建特定机型的输出目录（即报错信息里缺少的那个）
-          # 使用 -p 确保即使中间目录不存在也会一并创建
-          mkdir -p ${ANDROID_BUILD_TOP}/out/target/product/${MODEL}
-          
-          # 验证目录是否创建成功
-          if [ -d "${ANDROID_BUILD_TOP}/out/target/product/${MODEL}" ]; then
-              echo "目录创建成功: ${ANDROID_BUILD_TOP}/out/target/product/${MODEL}"
-              else
-                  echo "错误：无法创建目录！"
-                  exit 1
-              fi
+          # 这将找到 kernel_platform 所在的父目录绝对路径
+          REAL_ROOT=$(find "$GITHUB_WORKSPACE" -name "kernel_platform" -type d | head -n 1)
+          PROJECT_ROOT=$(dirname "$REAL_ROOT")
 
-
-          # 1. 确保进入了正确的 kernel_platform 目录
-          PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
-          cd "$PROJECT_ROOT/kernel_platform"
-
-          # 2. 自动检测并赋予权限（解决路径层级问题）
-          # 在三星源码中，build.sh 可能在 ./build/build.sh 或 ./kernel/build/build.sh
-          REAL_BUILD_SH=$(find . -name "build.sh" | head -n 1)
-
-          if [ -z "$REAL_BUILD_SH" ]; then
-              echo "错误：在此目录下找不到 build.sh，当前目录内容如下："
-              ls -R
+          # 检查路径是否有效，防止 cd 到根目录 /
+          if [ -z "$PROJECT_ROOT" ] || [ "$PROJECT_ROOT" = "/" ]; then
+              echo "错误：无法正确定位 kernel_source 路径！"
               exit 1
           fi
 
-          echo "找到构建脚本：$REAL_BUILD_SH"
-          chmod +x "$REAL_BUILD_SH"
+          cd "$PROJECT_ROOT"
+          echo "当前工作目录: $(pwd)"
 
-          # 3. 设置环境参数（必须在执行前）
-          export TARGET_BOARD_PLATFORM=gki
-          export VENDOR_NAME=sec
-          export SKIP_MRPROPER=1
+          # 2. 设置必要变量
+          export MODEL="e1q"
+          export ANDROID_BUILD_TOP=$(pwd)
+          # ... 其他 export 变量保持不变 ...
 
-          # 4. 执行编译
-          # 注意：一定要用刚才找到的真实路径
-          $REAL_BUILD_SH 2>&1 | tee -a ../build.log
+          # 3. 预创建目录（此时变量已确保不为空）
+          mkdir -p "${ANDROID_BUILD_TOP}/out/target/product/${MODEL}"
+
+          # 4. 进入平台目录并动态寻找 build.sh
+          cd kernel_platform
+          # 动态寻找 build.sh 的位置（兼容不同版本的目录结构）
+          BUILD_SH_PATH=$(find . -name "build.sh" | head -n 1)
+
+          if [ -f "$BUILD_SH_PATH" ]; then
+              echo "找到构建脚本: $BUILD_SH_PATH"
+              chmod +x "$BUILD_SH_PATH"
+    
+              # 5. 执行构建 (带上环境变量确保生效)
+              TARGET_BOARD_PLATFORM=gki VENDOR_NAME=sec SKIP_MRPROPER=1 \
+              "$BUILD_SH_PATH" 2>&1 | tee -a ../build.log
+          else
+              echo "错误：找不到 build.sh！"
+              ls -R
+              exit 1
+          fi
 
         
 
