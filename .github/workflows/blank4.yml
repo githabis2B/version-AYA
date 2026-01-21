@@ -120,12 +120,13 @@ jobs:
               -d KNOX_NCM \
               -d SECURITY_DSMS \
               -d SECURITY_KUMIHO \
-              -d MODULE_SIG
+              -d MODULE_SIG \
               -d RKP \
               -d KDP \
               -d INTEGRITY
           
           # 重要：禁用 TRIM_UNUSED_KSYMS (确保 KSU 能找到符号)
+          echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_TRIM_UNUSED_KSYMS=n" >> $DEFCONFIG
           sed -i 's/CONFIG_TRIM_UNUSED_KSYMS=y/CONFIG_TRIM_UNUSED_KSYMS=n/g' $DEFCONFIG
 
@@ -141,47 +142,29 @@ jobs:
           
       - name: Build Kernel
         run: |
-          PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
-          cd "$PROJECT_ROOT"
-          # 修复官方工具链中的 Python 软链接
-          PY3_DIR="kernel_platform/prebuilts/build-tools/path/linux-x86"
-          mkdir -p "$PY3_DIR"
-          ln -sf $(which python3) "$PY3_DIR/python3"
-          # 按照 README 设置变量
-          export BUILD_TARGET=e1q_chn_openx
-          export MODEL=e1q
-          export CHIPSET_NAME=pineapple
-          export ANDROID_BUILD_TOP=$(pwd)
-          export TARGET_PRODUCT=gki
-          export TARGET_BOARD_PLATFORM=gki
-          export OUT_DIR=${ANDROID_BUILD_TOP}/out/msm-kernel-${CHIPSET_NAME}-${TARGET_PRODUCT}
+          # 工具链路径 (确保 prebuilts 文件夹已通过 actions/checkout 或下载到位)
+          CLANG_PATH=$(pwd)/prebuilts/clang/host/linux-x86/clang-r487747c/bin
+          BUILD_TOOLS=$(pwd)/prebuilts/build-tools/linux-x86/bin
+          export PATH=$CLANG_PATH:$BUILD_TOOLS:$PATH
           
-          # 将解压后的内置工具链加入 PATH
-          # 优先使用 prebuilts 里的 bazel 和工具
-          export PATH=$PWD/kernel_platform/prebuilts/bazel/linux-x86_64:$PATH
-          export PATH=$PWD/kernel_platform/prebuilts/build-tools/path/linux-x86:$PATH
+          export LOCALVERSION="-android14-12"
+          export ARCH=arm64
+          export LLVM=1
+          export LLVM_IAS=1
           
-          # 提权
-          chmod -R +x kernel_platform/prebuilts/
-          chmod +x ./kernel_platform/build/android/prepare_vendor.sh
-          chmod +x ./build_kernel_GKI.sh
-          # 资源限制防止 OOM
-          export BAZEL_RAM=6144
-          export BAZEL_JOBS=2
+          # 增加交叉编译器的完整定义
+          ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_COMPAT=arm-linux-androideabi- LD=ld.lld"
+          OUT_DIR=$(pwd)/out
           
-          echo "开始基于官方工具链构建..."
-          RECOMPILE_KERNEL=1 ./kernel_platform/build/android/prepare_vendor.sh sec ${TARGET_PRODUCT} || \
-          (echo "prepare_vendor 失败，回退到标准 GKI 构建..." && yes y | ./build_kernel_GKI.sh)
-
-
+          # 编译逻辑
+          # 注意：在根目录运行 make，通过 -C common 指定源码位置
+          make -C common O=$OUT_DIR $ARGS gki_defconfig
+          make -C common O=$OUT_DIR $ARGS olddefconfig
+          make -j$(nproc --all) -C common O=$OUT_DIR $ARGS Image
           
           
-
-      - name: Upload Kernel Output
+      - name: Upload Kernel Image
         uses: actions/upload-artifact@v4
         with:
-          name: S24-Kernel-$(date +%Y%m%d)
-          path: |
-            kernel_source/out/**/boot/Image
-            kernel_source/out/**/dist/Image
-            kernel_source/out/**/*.ko
+          name: S24-Kernel-Image
+          path: out/arch/arm64/boot/Image
