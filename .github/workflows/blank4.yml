@@ -142,25 +142,37 @@ jobs:
           
       - name: Build Kernel
         run: |
-          # 工具链路径 (确保 prebuilts 文件夹已通过 actions/checkout 或下载到位)
-          CLANG_PATH=$(pwd)/prebuilts/clang/host/linux-x86/clang-r487747c/bin
-          BUILD_TOOLS=$(pwd)/prebuilts/build-tools/linux-x86/bin
+          # 1. 设置基础路径 (kernel_platform 的位置)
+          BASE_DIR=$(pwd)/version-AYA/kernel_source/kernel_platform
+          COMMON_DIR=$BASE_DIR/common
+          OUT_DIR=$(pwd)/out
+          
+          # 2. 修正工具链路径 (指向 kernel_platform/prebuilts)
+          CLANG_PATH=$BASE_DIR/prebuilts/clang/host/linux-x86/clang-r487747c/bin
+          BUILD_TOOLS=$BASE_DIR/prebuilts/build-tools/linux-x86/bin
           export PATH=$CLANG_PATH:$BUILD_TOOLS:$PATH
           
-          export LOCALVERSION="-android14-12"
+          # 3. 设置编译环境变量
+          export LOCALVERSION="-android14-12-exynos"
           export ARCH=arm64
           export LLVM=1
           export LLVM_IAS=1
           
-          # 增加交叉编译器的完整定义
+          # 定义编译器参数
           ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_COMPAT=arm-linux-androideabi- LD=ld.lld"
-          OUT_DIR=$(pwd)/out
           
-          # 编译逻辑
-          # 注意：在根目录运行 make，通过 -C common 指定源码位置
-          make -C common O=$OUT_DIR $ARGS gki_defconfig
-          make -C common O=$OUT_DIR $ARGS olddefconfig
-          make -j$(nproc --all) -C common O=$OUT_DIR $ARGS Image
+          # 4. 编译逻辑
+          # A. 生成基础配置
+          make -C $COMMON_DIR O=$OUT_DIR $ARGS gki_defconfig
+          
+          # B. 应用 LTO 优化设置 (ThinLTO 提升编译速度)
+          $COMMON_DIR/scripts/config --file $OUT_DIR/.config -e LTO_CLANG_THIN -d LTO_CLANG_FULL
+          
+          # C. 刷新配置并开始编译
+          make -C $COMMON_DIR O=$OUT_DIR $ARGS olddefconfig
+          make -j$(nproc --all) -C $COMMON_DIR O=$OUT_DIR $ARGS Image
+
+
           
           
       - name: Upload Kernel Image
