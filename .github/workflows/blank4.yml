@@ -123,7 +123,8 @@ jobs:
               -d MODULE_SIG \
               -d RKP \
               -d KDP \
-              -d INTEGRITY
+              -d INTEGRITY \
+              -d DEBUG_INFO_BTF
           
           # 重要：禁用 TRIM_UNUSED_KSYMS (确保 KSU 能找到符号)
           echo "CONFIG_KSU=y" >> $DEFCONFIG
