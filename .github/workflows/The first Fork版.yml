@@ -106,16 +106,16 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
 
           # 2. 修改 Defconfig (采用 Littlenine 的禁用逻辑)
-          make -j$(nproc) -C $(pwd) O=$(pwd)/out ${ARGS} $TARGET_DEFCONFIG
-
-          ./scripts/config --file out/.config \
-            -d UH \
-            -d RKP \
-            -d KDP \
-            -d SECURITY_DEFEX \
-            -d INTEGRITY \
-            -d FIVE \
-            -d TRIM_UNUSED_KSYMS
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          ./scripts/config --file $DEFCONFIG \
+              -d UH \
+              -d RKP \
+              -d KDP \
+              -d SECURITY_DEFEX \
+              -d INTEGRITY \
+              -d FIVE \
+              -d TRIM_UNUSED_KSYMS
+          echo "CONFIG_KSU=y" >> $DEFCONFIG
 
 
           # 禁用 LTO 以确保 GitHub 虚拟机不会 OOM (内存溢出)
