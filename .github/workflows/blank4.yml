@@ -153,12 +153,21 @@ jobs:
           
           # --- 修复核心：禁用 BTF ---
           ./scripts/config --file $OUT_DIR/.config -d DEBUG_INFO_BTF
+          
+          # 1. 禁用 BTF (解决 pahole 报错)
+          ./scripts/config --file $OUT_DIR/.config -d DEBUG_INFO_BTF
 
-          # --- 修复核心：配置栈保护的实现方式 ---
-          ./scripts/config --file $OUT_DIR/.config -e STACKPROTECTOR
-          ./scripts/config --file $OUT_DIR/.config -e STACKPROTECTOR_STRONG
-          # 必须加上下面这一行，否则会找不到 __stack_chk_guard
-          ./scripts/config --file $OUT_DIR/.config -e STACKPROTECTOR_PER_TASK
+          # 2. 彻底禁用栈保护 (解决 __stack_chk_guard 链接报错)
+          # 必须同时禁用这三项，确保编译器不再生成相关检查代码
+          ./scripts/config --file $OUT_DIR/.config -d STACKPROTECTOR
+          ./scripts/config --file $OUT_DIR/.config -d STACKPROTECTOR_STRONG
+          ./scripts/config --file $OUT_DIR/.config -d STACKPROTECTOR_PER_TASK
+
+          # 3. 核心：死守 LTO 开启 (这是保证开机的关键，不能动)
+          ./scripts/config --file $OUT_DIR/.config -e LTO_CLANG_THIN
+          
+          # 4. 强制检查 (防止被 olddefconfig 自动回滚)
+          make O=$OUT_DIR $ARGS olddefconfig
           # 确保 LTO 开启
           ./scripts/config --file $OUT_DIR/.config -e LTO_CLANG_THIN
 
