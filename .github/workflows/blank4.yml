@@ -110,31 +110,6 @@ jobs:
           # 1. 集成 KernelSU
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
 
-          # 2. 修改 Defconfig (采用 Littlenine 的禁用逻辑)
-          DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          ./scripts/config --file $DEFCONFIG \
-              -d UH \
-              -d FIVE \
-              -d PROCA \
-              -d SECURITY_DEFEX \
-              -d KNOX_NCM \
-              -d SECURITY_DSMS \
-              -d SECURITY_KUMIHO \
-              -d MODULE_SIG \
-              -d RKP \
-              -d KDP \
-              -d INTEGRITY \
-              -d DEBUG_INFO_BTF
-          
-          # 重要：禁用 TRIM_UNUSED_KSYMS (确保 KSU 能找到符号)
-          echo "CONFIG_KSU=y" >> $DEFCONFIG
-          echo "CONFIG_TRIM_UNUSED_KSYMS=n" >> $DEFCONFIG
-          sed -i 's/CONFIG_TRIM_UNUSED_KSYMS=y/CONFIG_TRIM_UNUSED_KSYMS=n/g' $DEFCONFIG
-
-          # 禁用 LTO 以确保 GitHub 虚拟机不会 OOM (内存溢出)
-          sed -i 's/CONFIG_LTO_CLANG_THIN=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
-          sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_NONE=y/g' $DEFCONFIG
-          echo "CONFIG_LTO_NONE=y" >> $DEFCONFIG
 
           # 物理删除 ABI 保护文件
           rm -f android/abi_gki_protected_exports_*
@@ -143,6 +118,12 @@ jobs:
           
       - name: Build Kernel
         run: |
+          # 1. 增加 Swap 空间 (防止 S24 LTO 链接时内存溢出)
+          sudo fallocate -l 12G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          
           # 1. 精确定义路径
           # 如果你的解压逻辑导致了 kernel_source/kernel_platform/common 的结构：
           WORKING_DIR=$(pwd)/kernel_source/kernel_platform
@@ -163,7 +144,7 @@ jobs:
           export PATH=$CLANG_PATH:$BUILD_TOOLS:$PATH
           
           # 3. 环境变量
-          export LOCALVERSION="-android14-12-exynos"
+          export LOCALVERSION="-android14-12-qcom"
           export ARCH=arm64
           export LLVM=1
           export LLVM_IAS=1
@@ -174,14 +155,9 @@ jobs:
           chmod +x ./scripts/config
           
           make O=$OUT_DIR $ARGS gki_defconfig
-          
-          # 在这里统一禁用导致报错的选项
-          ./scripts/config --file $OUT_DIR/.config \
-              -d DEBUG_INFO_BTF \
-              -d STACKPROTECTOR \
-              -d STACKPROTECTOR_STRONG \
-              -e LTO_CLANG_THIN \
-              -d LTO_CLANG_FULL
+
+          ./scripts/config --file $OUT_DIR/.config -e LTO_CLANG_THIN
+          ./scripts/config --file $OUT_DIR/.config -e STACKPROTECTOR_STRONG
           
           make O=$OUT_DIR $ARGS olddefconfig
           make -j$(nproc --all) O=$OUT_DIR $ARGS Image
