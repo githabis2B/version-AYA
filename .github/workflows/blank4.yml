@@ -118,11 +118,6 @@ jobs:
           
       - name: Build Kernel
         run: |
-          # 1. 增加 Swap 空间 (防止 S24 LTO 链接时内存溢出)
-          sudo fallocate -l 12G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
           
           # 1. 精确定义路径
           # 如果你的解压逻辑导致了 kernel_source/kernel_platform/common 的结构：
