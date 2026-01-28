@@ -150,6 +150,9 @@ jobs:
           chmod +x ./scripts/config
           
           make O=$OUT_DIR $ARGS gki_defconfig
+          
+          # --- 核心修复：在这里禁用 BTF ---
+          ./scripts/config --file $OUT_DIR/.config -d DEBUG_INFO_BTF
 
           ./scripts/config --file $OUT_DIR/.config -e LTO_CLANG_THIN
           ./scripts/config --file $OUT_DIR/.config -e STACKPROTECTOR_STRONG
