@@ -151,11 +151,17 @@ jobs:
           
           make O=$OUT_DIR $ARGS gki_defconfig
           
-          # --- 核心修复：在这里禁用 BTF ---
+          # --- 修复核心：禁用 BTF ---
           ./scripts/config --file $OUT_DIR/.config -d DEBUG_INFO_BTF
 
-          ./scripts/config --file $OUT_DIR/.config -e LTO_CLANG_THIN
+          # --- 修复核心：配置栈保护的实现方式 ---
+          ./scripts/config --file $OUT_DIR/.config -e STACKPROTECTOR
           ./scripts/config --file $OUT_DIR/.config -e STACKPROTECTOR_STRONG
+          # 必须加上下面这一行，否则会找不到 __stack_chk_guard
+          ./scripts/config --file $OUT_DIR/.config -e STACKPROTECTOR_PER_TASK
+          # 确保 LTO 开启
+          ./scripts/config --file $OUT_DIR/.config -e LTO_CLANG_THIN
+
           
           make O=$OUT_DIR $ARGS olddefconfig
           make -j$(nproc --all) O=$OUT_DIR $ARGS Image
