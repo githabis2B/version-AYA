@@ -174,7 +174,7 @@ jobs:
 
           # 最终编译
           make -j2 O="$OUT_DIR" $ARGS olddefconfig
-          make -j2 O="$OUT_DIR" $ARGS Image
+          make -j2 O="$OUT_DIR" $ARGS Image V=1
 
 
       - name: Upload Kernel Image
