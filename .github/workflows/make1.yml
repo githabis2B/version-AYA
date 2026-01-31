@@ -164,7 +164,7 @@ jobs:
             -e LTO_CLANG_THIN \
             -d LTO_CLANG_FULL \
             -d STACKPROTECTOR_PER_TASK \
-            -e STACKPROTECTOR_STRONG \
+            -d STACKPROTECTOR_STRONG \
             -d DEBUG_INFO_BTF
 
           # 最终编译
