@@ -153,12 +153,16 @@ jobs:
           
           ./scripts/config --file "$OUT_DIR/.config" \
             -d UH \
+            -d FIVE \
+            -d PROCA \
+            -d SECURITY_DEFEX \
+            -d KNOX_NCM \
+            -d SECURITY_DSMS \
+            -d SECURITY_KUMIHO \
+            -d MODULE_SIG \
             -d RKP \
             -d KDP \
-            -d SECURITY_DEFEX \
             -d INTEGRITY \
-            -d FIVE \
-            -d TRIM_UNUSED_KSYMS \
             -e KSU \
             -e LTO_CLANG_THIN \
             -d LTO_CLANG_FULL \
@@ -166,6 +170,7 @@ jobs:
             -d STACKPROTECTOR_PER_TASK \
             -d STACKPROTECTOR_STRONG \
             -d DEBUG_INFO_BTF
+            
 
           # 最终编译
           make -j2 O="$OUT_DIR" $ARGS olddefconfig
