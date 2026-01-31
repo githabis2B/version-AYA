@@ -151,10 +151,8 @@ jobs:
           # 加载配置
           make O="$OUT_DIR" $ARGS pineapple_gki_defconfig
           ./scripts/config --file "$OUT_DIR/.config" \
-            -d UH -d FIVE -d PROCA -d SECURITY_DEFEX -d KNOX_NCM \
-            -d SECURITY_DSMS -d SECURITY_KUMIHO -d RKP -d KDP -d INTEGRITY \
-            -e KSU -e LTO_CLANG_THIN -d LTO_CLANG_FULL -d STACKPROTECTOR \
-            -d STACKPROTECTOR_PER_TASK -d STACKPROTECTOR_STRONG -d DEBUG_INFO_BTF
+            -e KSU -e LTO_CLANG_THIN -d LTO_CLANG_FULL \
+            -d UH -d RKP -d SECURITY_DEFEX
           # 最终编译
           make -j2 O="$OUT_DIR" $ARGS olddefconfig
           make -j2 O="$OUT_DIR" $ARGS Image V=1
