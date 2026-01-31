@@ -88,21 +88,32 @@ jobs:
           export PATH=$CLANG_PATH:$BUILD_TOOLS:$PATH
           
           # 3. 环境变量
-          export LOCALVERSION="-android14-12-qcom"
+          export LOCALVERSION="-android14-11"
           export ARCH=arm64
           export LLVM=1
           export LLVM_IAS=1
           ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_COMPAT=arm-linux-androideabi- LD=ld.lld"
           
           # 4. 执行编译
+          make O=$OUT_DIR $ARGS gki_defconfig
+          make O=$OUT_DIR $ARGS olddefconfig
+
           cd $COMMON_DIR
           chmod +x ./scripts/config
           
-          make O=$OUT_DIR $ARGS gki_defconfig
- 
-          make O=$OUT_DIR $ARGS olddefconfig
-          make -j$(nproc --all) O=$OUT_DIR $ARGS Image
+          make O=$OUT_DIR $ARGS pineapple_gki_defconfig
+          
+          # 4. make
+          ./scripts/config --file $OUT_DIR/.config \
+            -d UH \
+            -d RKP \
+            -d KDP \
+            -d SECURITY_DEFEX \
+            -d INTEGRITY \
+            -d FIVE \
+            -d TRIM_UNUSED_KSYMS
 
+          make -j2 O=$OUT_DIR $ARGS Image
 
           
           
