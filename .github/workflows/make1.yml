@@ -58,14 +58,12 @@ jobs:
             # 2. 下载并一步到位解压
             echo "正在下载并自动合并解压..."
             gh release download S24_Tools --repo ${{ github.repository }} -p 'toolchain.tar.tar.*' --clobber
-
-
     
             # 创建目标目录
             mkdir -p kernel_platform/prebuilts
     
             # 核心：7z 解压分卷直接送入 tar 提取，不产生中间大文件
-            7z x -so toolchain.tar.tar.001 | tar -xf - -C kernel_platform/prebuilts/ --strip-components=1
+            7z x -so toolchain.tar.tar.001 | tar -xzf - -C kernel_platform/prebuilts/ --strip-components=1
     
             # 3. 清理下载的残余分卷
             rm toolchain.tar.tar.*
