@@ -172,9 +172,11 @@ jobs:
           make -j2 O="$OUT_DIR" $ARGS olddefconfig
           make -j2 O="$OUT_DIR" $ARGS Image
 
-          
+
       - name: Upload Kernel Image
         uses: actions/upload-artifact@v4
         with:
           name: S24-Kernel-Image
-          path: out/arch/arm64/boot/Image
+          # 自动在所有目录下搜索 Image，只要它在 out 路径结构内
+          path: "**/out/arch/arm64/boot/Image"
+
