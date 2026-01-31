@@ -152,10 +152,20 @@ jobs:
           # 加载配置
           make O="$OUT_DIR" $ARGS pineapple_gki_defconfig
           
-          # Kokuban 阉割逻辑
           ./scripts/config --file "$OUT_DIR/.config" \
-            -d UH -d RKP -d KDP -d SECURITY_DEFEX -d INTEGRITY -d FIVE -d TRIM_UNUSED_KSYMS -e KSU \
-            -e LTO_CLANG_THIN -d LTO_CLANG_FULL
+            -d UH \
+            -d RKP \
+            -d KDP \
+            -d SECURITY_DEFEX \
+            -d INTEGRITY \
+            -d FIVE \
+            -d TRIM_UNUSED_KSYMS \
+            -e KSU \
+            -e LTO_CLANG_THIN \
+            -d LTO_CLANG_FULL \
+            -d STACKPROTECTOR_PER_TASK \
+            -e STACKPROTECTOR_STRONG \
+            -d DEBUG_INFO_BTF
 
           # 最终编译
           make -j2 O="$OUT_DIR" $ARGS olddefconfig
