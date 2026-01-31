@@ -170,8 +170,8 @@ jobs:
             -d STACKPROTECTOR_PER_TASK \
             -d STACKPROTECTOR_STRONG \
             -d DEBUG_INFO_BTF
-            
 
+            
           # 最终编译
           make -j2 O="$OUT_DIR" $ARGS olddefconfig
           make -j2 O="$OUT_DIR" $ARGS Image V=1
