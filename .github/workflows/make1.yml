@@ -106,63 +106,60 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
 
 
-      - name: 放置自定义配置文件
+      - name: Deploy Custom Defconfig
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 1. 定位内核配置存放的物理目录
-          # 注意：必须放在 arch/arm64/configs 下，make 才能识别
+          # 1. 动态寻找 common 目录 (这是你的内核主目录)
+          COMMON_DIR=$(find $GITHUB_WORKSPACE -name "common" -type d | grep "kernel_platform/common" | head -n 1)
+          
+          # 2. 检查路径是否存在
+          if [ -z "$COMMON_DIR" ]; then echo "❌ 找不到 common 目录"; exit 1; fi
+          
+          # 3. 下载并部署配置
           CONFIG_TARGET_DIR="$COMMON_DIR/arch/arm64/configs"
           mkdir -p "$CONFIG_TARGET_DIR"
-
-          echo "正在从 Release [defconfig] 下载文本配置文件..."
-          # 下载匹配模式的文件
           gh release download defconfig --repo ${{ github.repository }} --pattern 'pineapple_gki_defconfig' --clobber
-
-          # 2. 强制移动并确保命名准确
-          # 即使下载下来带了后缀，也强制更名为 make 识别的名字
           mv -f pineapple_gki_defconfig "$CONFIG_TARGET_DIR/pineapple_gki_defconfig"
-
-          echo "✅ 配置文件已就位: $CONFIG_TARGET_DIR/pineapple_gki_defconfig"
-          echo "文件行数统计："
-          wc -l "$CONFIG_TARGET_DIR/pineapple_gki_defconfig"
-
-
+          
+          # 4. 将路径写入全局环境变量，供下一步 Build 使用
+          echo "COMMON_DIR=$COMMON_DIR" >> $GITHUB_ENV
+          echo "PROJECT_ROOT=$(dirname $COMMON_DIR)" >> $GITHUB_ENV
+          echo "OUT_DIR=$(dirname $COMMON_DIR)/out" >> $GITHUB_ENV
+          
+          echo "✅ 配置就位，行数：$(wc -l < $CONFIG_TARGET_DIR/pineapple_gki_defconfig)"
 
       - name: Build Kernel
         run: |
-          # 1. 环境变量与路径准备
-          CLANG_PATH=$WORKING_DIR/prebuilts/clang/host/linux-x86/clang-r487747c/bin
-          BUILD_TOOLS=$WORKING_DIR/prebuilts/build-tools/linux-x86/bin
-          export PATH=$CLANG_PATH:$BUILD_TOOLS:$PATH
+          # 1. 定义变量 (从 GITHUB_ENV 自动读取)
+          # 定位 Clang
+          CLANG_BIN=$(find $PROJECT_ROOT/prebuilts -name "clang" -type f | xargs dirname | head -n 1)
+          # 定位构建工具
+          BUILD_TOOLS=$(find $PROJECT_ROOT/prebuilts -name "make" -type f | xargs dirname | head -n 1)
           
-          # 将 LOCALVERSION 整合进 ARGS，确保万无一失
+          export PATH="$CLANG_BIN:$BUILD_TOOLS:$PATH"
+          
+          # 编译参数
           LOCALVERSION="-android14-11"
           ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_COMPAT=arm-linux-androideabi- LD=ld.lld LOCALVERSION=$LOCALVERSION"
           
-          # 2. 进入核心编译目录
-          cd $COMMON_DIR
+          # 2. 开始构建
+          cd "$COMMON_DIR"
+          mkdir -p "$OUT_DIR"
           chmod +x ./scripts/config
 
-          # 3. 加载 7850 行的“神级配置” 确保 pineapple_gki_defconfig 已在 $COMMON_DIR/arch/arm64/configs/ 下
-          make O=$OUT_DIR $ARGS pineapple_gki_defconfig
-          # 4. make
-          ./scripts/config --file $OUT_DIR/.config \
-            -d UH \
-            -d RKP \
-            -d KDP \
-            -d SECURITY_DEFEX \
-            -d INTEGRITY \
-            -d FIVE \
-            -d TRIM_UNUSED_KSYMS \
-            -e KSU
-
-          # 5. 同步依赖并开始编译
-          # 限制 -j2 以防 GitHub Actions 内存溢出 (OOM)
-          make O=$OUT_DIR $ARGS olddefconfig
-          make -j2 O=$OUT_DIR $ARGS Image
-
+          # 加载配置
+          make O="$OUT_DIR" $ARGS pineapple_gki_defconfig
           
+          # Kokuban 阉割逻辑
+          ./scripts/config --file "$OUT_DIR/.config" \
+            -d UH -d RKP -d KDP -d SECURITY_DEFEX -d INTEGRITY -d FIVE -d TRIM_UNUSED_KSYMS -e KSU \
+            -e LTO_CLANG_THIN -d LTO_CLANG_FULL
+
+          # 最终编译
+          make -j2 O="$OUT_DIR" $ARGS olddefconfig
+          make -j2 O="$OUT_DIR" $ARGS Image
+
           
       - name: Upload Kernel Image
         uses: actions/upload-artifact@v4
