@@ -132,11 +132,10 @@ jobs:
 
       - name: Build Kernel
         run: |
-          # 1. 定义变量 (从 GITHUB_ENV 自动读取)
-          # 定位 Clang
-          CLANG_BIN=$(find $PROJECT_ROOT/prebuilts -name "clang" -type f | xargs dirname | head -n 1)
-          # 定位构建工具
-          BUILD_TOOLS=$(find $PROJECT_ROOT/prebuilts -name "make" -type f | xargs dirname | head -n 1)
+          # 这种写法最安全，不会抓错平台
+          CLANG_BIN=$(find $PROJECT_ROOT/prebuilts/clang/host/linux-x86 -name "clang" -type f | xargs dirname | head -n 1)
+          BUILD_TOOLS=$(find $PROJECT_ROOT/prebuilts/build-tools/linux-x86 -name "make" -type f | xargs dirname | head -n 1)
+
           
           export PATH="$CLANG_BIN:$BUILD_TOOLS:$PATH"
           
