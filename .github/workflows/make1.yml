@@ -57,7 +57,9 @@ jobs:
 
             # 2. 下载并一步到位解压
             echo "正在下载并自动合并解压..."
-            gh release download S24_Tools -p 'toolchain.tar.tar.*' --clobber
+            gh release download S24_Tools --repo ${{ github.repository }} -p 'toolchain.tar.tar.*' --clobber
+
+
     
             # 创建目标目录
             mkdir -p kernel_platform/prebuilts
@@ -103,10 +105,6 @@ jobs:
 
 
 
-
-          
-      - name: Build Kernel
-        run: |
       - name: Build Kernel
         run: |
           # 1. 环境变量与路径准备
