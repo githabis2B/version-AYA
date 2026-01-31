@@ -1,4 +1,4 @@
-name: blank4
+name: make1.0
 on:
   workflow_dispatch:
 
@@ -52,54 +52,29 @@ jobs:
             mv kernel_source/kernel_source/* kernel_source/
           fi
 
+
+
       - name: Download and Setup Official Toolchain
         env:
-          GH_TOKEN: ${{ github.token }}
+           GH_TOKEN: ${{ github.token }}
         run: |
-          # 1. 确定工作根目录
-          PROJECT_ROOT=$(find $GITHUB_WORKSPACE/kernel_source -name "kernel_platform" -printf '%h\n' | head -n 1)
-          cd "$PROJECT_ROOT"
+            # 1. 进入指定目录 (假设路径固定)
+            cd "$GITHUB_WORKSPACE/kernel_source"
 
-          echo "正在下载工具链分卷..."
-          gh release download S24_Tools --repo ${{ github.repository }} --pattern 'toolchain.tar.tar.*' --clobber
+            # 2. 下载并一步到位解压
+            echo "正在下载并自动合并解压..."
+            gh release download S24_Tools -p 'toolchain.tar.tar.*' --clobber
+    
+            # 创建目标目录
+            mkdir -p kernel_platform/prebuilts
+    
+            # 核心：7z 解压分卷直接送入 tar 提取，不产生中间大文件
+            7z x -so toolchain.tar.tar.001 | tar -xf - -C kernel_platform/prebuilts/ --strip-components=1
+    
+            # 3. 清理下载的残余分卷
+            rm toolchain.tar.tar.*
 
-          echo "正在合并并提取分卷 (7z)..."
-          # 7z 会直接从 .001 提取出里面的压缩包
-          7z x toolchain.tar.tar.001 -y
-          
-          # 【关键调试步骤】列出当前文件，看看 7z 到底解压出了什么
-          echo "检查当前目录下文件："
-          ls -lh
-          
-          # 2. 物理定位解压出来的压缩包 (自动处理命名不一致)
-          GZ_FILE=$(ls *.tar.gz 2>/dev/null | head -n 1)
-          if [ -z "$GZ_FILE" ]; then
-            echo "错误：未发现 .tar.gz 文件，尝试查找 .tar"
-            TAR_FILE=$(ls *.tar 2>/dev/null | head -n 1)
-          else
-            echo "发现压缩包: $GZ_FILE，正在解压缩为 .tar..."
-            # 使用 gunzip 保持文件名一致性，这样更节省空间且稳定
-            gunzip -f "$GZ_FILE"
-            TAR_FILE=$(ls *.tar 2>/dev/null | head -n 1)
-          fi
 
-          if [ -z "$TAR_FILE" ]; then
-            echo "错误：无法定位到任何 .tar 文件！"
-            ls -R
-            exit 1
-          fi
-
-          echo "最终解压 $TAR_FILE 到 prebuilts..."
-          mkdir -p kernel_platform/prebuilts
-          # 执行最终解压
-          tar -xf "$TAR_FILE" -C kernel_platform/prebuilts/ --strip-components=1
-
-          echo "清理临时大文件..."
-          rm -f toolchain.tar.tar.*
-          rm -f *.tar
-          
-          echo "工具链就位！验证路径："
-          ls -F kernel_platform/prebuilts/ | head -n 10
 
 
       - name: Setup KernelSU and Security Patches
