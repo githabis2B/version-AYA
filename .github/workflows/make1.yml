@@ -163,6 +163,7 @@ jobs:
             -e KSU \
             -e LTO_CLANG_THIN \
             -d LTO_CLANG_FULL \
+            -d STACKPROTECTOR \
             -d STACKPROTECTOR_PER_TASK \
             -d STACKPROTECTOR_STRONG \
             -d DEBUG_INFO_BTF
