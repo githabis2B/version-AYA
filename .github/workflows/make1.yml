@@ -29,44 +29,33 @@ jobs:
           sudo apt-get install -y bc build-essential flex bison m4 libssl-dev libelf-dev p7zip-full gzip
           
           
-      - name: Download and Extract Source
+      - name: 准备源码与工具链
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # 1. 下载并解压源码
           echo "正在下载源码..."
           gh release download kernel --repo ${{ github.repository }} --pattern 'Kernel.tar.gz' --clobber
           
-          echo "正在解压源码..."
           mkdir -p kernel_source
-          if ls *.zip 1> /dev/null 2>&1; then
-            unzip -q *.zip -d kernel_source/
-          elif ls *.tar.gz 1> /dev/null 2>&1; then
-            tar -zxf *.tar.gz -C kernel_source/
-          fi
+          echo "正在解压源码..."
+          tar -zxf Kernel.tar.gz -C kernel_source/ --strip-components=1
+          rm Kernel.tar.gz
+
+          # 2. 进入源码目录准备下载工具链
+          # 这样可以确保 gh 下载的文件直接就在 kernel_source 目录下
+          cd kernel_source
+          mkdir -p kernel_platform/prebuilts
+
+          echo "正在下载工具链分卷..."
+          gh release download S24_Tools --repo ${{ github.repository }} -p 'toolchain.tar.tar.*' --clobber
           
-          if [ -d "kernel_source/kernel_source" ]; then
-            mv kernel_source/kernel_source/* kernel_source/
-          fi
+          echo "正在流式合并解压工具链..."
+          # 注意：此时已在 kernel_source 目录下，所以 -C 路径不需要加前缀
+          7z x -so toolchain.tar.tar.001 | tar -xzf - -C kernel_platform/prebuilts/ --strip-components=1
           
-
-      - name: Download and Setup Official Toolchain
-        env:
-           GH_TOKEN: ${{ github.token }}
-        run: |
-            # 1. 确保根目录存在并进入 (防止 cd 失败)
-            mkdir -p "$GITHUB_WORKSPACE/kernel_source/kernel_platform/prebuilts"
-            cd "$GITHUB_WORKSPACE/kernel_source"
-            # 2. 下载分卷
-            echo "正在从仓库 ${{ github.repository }} 下载工具链..."
-            gh release download S24_Tools --repo ${{ github.repository }} -p 'toolchain.tar.tar.*' --clobber  
-            # 3. 核心解压：7z 接管道流向 tar
-            echo "正在合并并流式解压到 prebuilts..."
-            7z x -so toolchain.tar.tar.001 | tar -xzf - -C kernel_platform/prebuilts/ --strip-components=1 
-            # 4. 清理
-            rm toolchain.tar.tar.*
-
-
-
+          echo "清理临时文件..."
+          rm toolchain.tar.tar.*
 
 
       - name: Setup KernelSU and Security Patches
