@@ -27,11 +27,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential flex bison m4 libssl-dev libelf-dev p7zip-full gzip
-
-
-
-
-
+          
           
       - name: Download and Extract Source
         env:
@@ -51,9 +47,7 @@ jobs:
           if [ -d "kernel_source/kernel_source" ]; then
             mv kernel_source/kernel_source/* kernel_source/
           fi
-
-
-
+          
       - name: Download and Setup Official Toolchain
         env:
            GH_TOKEN: ${{ github.token }}
@@ -85,29 +79,9 @@ jobs:
           # 1. 集成 KernelSU
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
 
-
-          # 物理删除 ABI 保护文件
-          rm -f android/abi_gki_protected_exports_*
-
-
           
       - name: Build Kernel
         run: |
-          
-          # 1. 精确定义路径
-          # 如果你的解压逻辑导致了 kernel_source/kernel_platform/common 的结构：
-          WORKING_DIR=$(pwd)/kernel_source/kernel_platform
-          COMMON_DIR=$WORKING_DIR/common
-          OUT_DIR=$(pwd)/out
-          
-          # 验证目录是否存在
-          if [ ! -d "$COMMON_DIR" ]; then
-            echo "错误：找不到 $COMMON_DIR"
-            echo "当前全路径文件树预览："
-            ls -R $(pwd) | grep ":$" | sed -e 's/:$//' -e 's/[^-][^\/]*\//--/g' -e 's/^/   /'
-            exit 1
-          fi
-
           # 2. 工具链路径 (指向你解压确定的位置)
           CLANG_PATH=$WORKING_DIR/prebuilts/clang/host/linux-x86/clang-r487747c/bin
           BUILD_TOOLS=$WORKING_DIR/prebuilts/build-tools/linux-x86/bin
@@ -125,28 +99,7 @@ jobs:
           chmod +x ./scripts/config
           
           make O=$OUT_DIR $ARGS gki_defconfig
-          
-          # --- 修复核心：禁用 BTF ---
-          ./scripts/config --file $OUT_DIR/.config -d DEBUG_INFO_BTF
-          
-          # 1. 禁用 BTF (解决 pahole 报错)
-          ./scripts/config --file $OUT_DIR/.config -d DEBUG_INFO_BTF
-
-          # 2. 彻底禁用栈保护 (解决 __stack_chk_guard 链接报错)
-          # 必须同时禁用这三项，确保编译器不再生成相关检查代码
-          ./scripts/config --file $OUT_DIR/.config -d STACKPROTECTOR
-          ./scripts/config --file $OUT_DIR/.config -d STACKPROTECTOR_STRONG
-          ./scripts/config --file $OUT_DIR/.config -d STACKPROTECTOR_PER_TASK
-
-          # 3. 核心：死守 LTO 开启 (这是保证开机的关键，不能动)
-          ./scripts/config --file $OUT_DIR/.config -e LTO_CLANG_THIN
-          
-          # 4. 强制检查 (防止被 olddefconfig 自动回滚)
-          make O=$OUT_DIR $ARGS olddefconfig
-          # 确保 LTO 开启
-          ./scripts/config --file $OUT_DIR/.config -e LTO_CLANG_THIN
-
-          
+ 
           make O=$OUT_DIR $ARGS olddefconfig
           make -j$(nproc --all) O=$OUT_DIR $ARGS Image
 
