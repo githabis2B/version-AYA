@@ -138,7 +138,12 @@ jobs:
           
           # 编译参数
           LOCALVERSION="-android14-11"
-          ARGS="ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_COMPAT=arm-linux-androideabi- LD=ld.lld LOCALVERSION=$LOCALVERSION"
+          ARGS="ARCH=arm64 
+          LLVM=1 
+          LLVM_IAS=1 
+          CROSS_COMPILE=aarch64-linux-android- 
+          CROSS_COMPILE_COMPAT=arm-linux-androideabi- LD=ld.lld 
+          LOCALVERSION=$LOCALVERSION"
           
           # 2. 开始构建
           cd "$COMMON_DIR"
@@ -158,7 +163,11 @@ jobs:
             
           # 最终编译
           set -e
-          make -j2 O="$OUT_DIR" $ARGS olddefconfig
+          # ======= 在日志中打印完整 .config 内容 =======
+          echo "::group::点击展开查看完整 .config 内容"
+          cat "$OUT_DIR/.config"
+          echo "::endgroup::"
+          # ==========================================
           make -j2 O="$OUT_DIR" $ARGS Image
 
 
