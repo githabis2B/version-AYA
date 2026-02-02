@@ -10,9 +10,6 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout Script
-        uses: actions/checkout@v4
-
       - name: Maximize Build Space
         uses: easimon/maximize-build-space@master
         with:
@@ -151,8 +148,14 @@ jobs:
           # 加载配置
           make O="$OUT_DIR" $ARGS pineapple_gki_defconfig
           ./scripts/config --file "$OUT_DIR/.config" \
-            -e KSU -e LTO_CLANG_THIN -d LTO_CLANG_FULL \
-            -d UH -d RKP -d SECURITY_DEFEX
+            -d UH \
+            -d RKP \
+            -d KDP \
+            -d SECURITY_DEFEX \
+            -d INTEGRITY \
+            -d FIVE \
+            -d TRIM_UNUSED_KSYMS
+            
           # 最终编译
           make -j2 O="$OUT_DIR" $ARGS olddefconfig
           make -j2 O="$OUT_DIR" $ARGS Image V=1
